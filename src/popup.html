@@ -1,49 +1,305 @@
 <!doctype html>
 <html>
   <head>
+    <meta charset="utf-8" />
     <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
       body {
-        width: 400px;
-        font-family: Arial, Helvetica, sans-serif;
+        width: 320px;
+        background: #0e0e10;
+        color: #efeff1;
+        font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        padding: 16px;
+      }
+      h1 {
+        font-size: 18px;
+        margin-bottom: 12px;
+        font-weight: 600;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 16px 0 8px;
+        font-weight: 600;
+        color: #bf94ff;
       }
 
-      @media (prefers-color-scheme: dark) {
-        body {
-          color: #eee;
-          background: #121212;
-          color-scheme: dark;
-        }
+      /* Accounts */
+      .account {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px;
+        background: #18181b;
+        border-radius: 4px;
+        margin-bottom: 6px;
+      }
+      .account.active {
+        border-left: 3px solid #9147ff;
+      }
+      .account-name {
+        font-weight: 600;
+      }
+      .account-actions button {
+        background: none;
+        border: 1px solid #3a3a3d;
+        color: #efeff1;
+        border-radius: 4px;
+        padding: 3px 8px;
+        cursor: pointer;
+        font-size: 12px;
+        margin-left: 4px;
+      }
+      .account-actions button:hover {
+        background: #3a3a3d;
       }
 
-      body:not(.chatterino-windows) .chatterino-if-windows,
-      body.chatterino-windows .chatterino-if-not-windows {
-        display: none;
+      /* Buttons */
+      .btn {
+        display: block;
+        width: 100%;
+        padding: 8px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+        margin-top: 8px;
+      }
+      .btn-primary {
+        background: #9147ff;
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: #772ce8;
+      }
+
+      /* Settings */
+      .setting {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 0;
+      }
+      .setting > label:first-child {
+        flex: 1;
+      }
+      .setting > input[type="number"] {
+        width: 70px;
+        background: #18181b;
+        color: #efeff1;
+        border: 1px solid #3a3a3d;
+        border-radius: 4px;
+        padding: 3px 6px;
+      }
+
+      .toggle {
+        position: relative;
+        width: 36px;
+        height: 20px;
+      }
+      .toggle input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+      .toggle .slider {
+        position: absolute;
+        inset: 0;
+        background: #3a3a3d;
+        border-radius: 20px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .toggle .slider::before {
+        content: "";
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        left: 2px;
+        top: 2px;
+        background: #efeff1;
+        border-radius: 50%;
+        transition: transform 0.2s;
+      }
+      .toggle input:checked + .slider {
+        background: #9147ff;
+      }
+      .toggle input:checked + .slider::before {
+        transform: translateX(16px);
+      }
+
+      .spinner {
+        display: flex;
+        align-items: center;
+      }
+      .spinner-btn {
+        width: 24px;
+        height: 24px;
+        background: #3a3a3d;
+        color: #efeff1;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .spinner-btn:hover {
+        background: #53535f;
+      }
+      .spinner-btn:first-child {
+        border-radius: 4px 0 0 4px;
+      }
+      .spinner-btn:last-child {
+        border-radius: 0 4px 4px 0;
+      }
+      .spinner input {
+        width: 36px;
+        height: 24px;
+        background: #18181b;
+        color: #efeff1;
+        border: 1px solid #3a3a3d;
+        border-left: none;
+        border-right: none;
+        text-align: center;
+        font-size: 12px;
+        font-family: inherit;
+        outline: none;
+        -moz-appearance: textfield;
+      }
+      .spinner input::-webkit-inner-spin-button,
+      .spinner input::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+      }
+
+      .color-field {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .color-field input[type="text"] {
+        width: 72px;
+        background: #18181b;
+        color: #efeff1;
+        border: 1px solid #3a3a3d;
+        border-radius: 4px;
+        padding: 3px 6px;
+        font-family: monospace;
+        font-size: 12px;
+      }
+      .color-field .swatch {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        border: 1px solid #3a3a3d;
+        flex-shrink: 0;
+      }
+
+      .emote-checks {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .emote-checks label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .emote-checks input[type="checkbox"] {
+        accent-color: #9147ff;
+      }
+
+      .divider {
+        border: none;
+        border-top: 1px solid #2a2a2d;
+        margin: 12px 0;
       }
     </style>
   </head>
-
   <body>
-    <div>
-      <h3>Settings:</h3>
-      <label>
-        <input id="replace-twitch" type="checkbox" />Replace Twitch chat (page
-        reload required)
-      </label>
+    <h1>Converse</h1>
 
-      <h3>Troubleshooting:</h3>
-      <ul>
-        <li class="chatterino-if-not-windows">
-          Chat replacement is not supported on your OS.
-        </li>
-        <li>
-          Make sure <a href="https://chatterino.com">Chatterino</a> version
-          <span class="chatterino-if-windows">2.1.1</span
-          ><span class="chatterino-if-not-windows">2.5.3</span> or later is
-          installed and running on your computer.
-        </li>
-        <li>There might be issues with other Twitch related extensions.</li>
-      </ul>
+    <h2>Accounts</h2>
+    <div id="account-list"></div>
+    <button id="add-account" class="btn btn-primary">Add account</button>
+
+    <hr class="divider" />
+
+    <h2>Settings</h2>
+
+    <div class="setting">
+      <label>Font size</label>
+      <div class="spinner">
+        <button class="spinner-btn" id="fontSizeDec">&minus;</button>
+        <input type="number" id="fontSize" min="10" max="20" value="13" />
+        <button class="spinner-btn" id="fontSizeInc">+</button>
+      </div>
     </div>
-    <script src="popup.js" type="module"></script>
+
+    <div class="setting">
+      <label>Message spacing</label>
+      <div class="spinner">
+        <button class="spinner-btn" id="messageSpacingDec">&minus;</button>
+        <input type="number" id="messageSpacing" min="0" max="20" value="2" />
+        <button class="spinner-btn" id="messageSpacingInc">+</button>
+      </div>
+    </div>
+
+    <div class="setting">
+      <label>Timestamps</label>
+      <label class="toggle">
+        <input type="checkbox" id="showTimestamps" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="setting">
+      <label>Badges</label>
+      <label class="toggle">
+        <input type="checkbox" id="showBadges" checked />
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <div class="setting">
+      <label>Message cap</label>
+      <input type="number" id="messageCap" min="100" max="2000" value="500" />
+    </div>
+
+    <div class="setting">
+      <label>Odd row bg</label>
+      <div class="color-field">
+        <span class="swatch" id="bgOddSwatch"></span>
+        <input type="text" id="bgOdd" maxlength="7" placeholder="#0e0e10" />
+      </div>
+    </div>
+
+    <div class="setting">
+      <label>Even row bg</label>
+      <div class="color-field">
+        <span class="swatch" id="bgEvenSwatch"></span>
+        <input type="text" id="bgEven" maxlength="7" placeholder="#111114" />
+      </div>
+    </div>
+
+    <div class="setting" style="flex-direction: column; align-items: flex-start">
+      <label style="margin-bottom: 6px">Emote providers</label>
+      <div class="emote-checks">
+        <label><input type="checkbox" id="ep-twitch" checked /> Twitch</label>
+        <label><input type="checkbox" id="ep-7tv" checked /> 7TV</label>
+        <label><input type="checkbox" id="ep-bttv" checked /> BTTV</label>
+        <label><input type="checkbox" id="ep-ffz" checked /> FFZ</label>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
   </body>
 </html>

@@ -1,466 +1,262 @@
-const ignoredPages = new Set([
-  'directory',
-  'downloads',
-  'friends',
-  'inventory',
-  'jobs',
-  'messages',
-  'p',
-  'payments',
-  'popout',
-  'prime',
-  'settings',
-  'store',
-  'subscriptions',
-  'turbo',
-  'videos',
-  'wallet',
-]);
+import {
+  getAccounts,
+  getActiveAccount,
+  validateToken,
+  CLIENT_ID,
+} from "./lib/auth.js";
+import { parseIRCMessage } from "./lib/irc.js";
+import { fetchBadges } from "./lib/badges.js";
+import { fetchAllEmotes } from "./lib/emotes.js";
 
-class AttachedWindows {
-  /** @param {number} winID */
-  static async isAttached(winID) {
-    const windows = await AttachedWindows.#load();
-    return winID in windows;
-  }
+// --- State ---
+let ircSocket = null;
+let ircReady = false;
+let reconnectDelay = 1000;
+let joinedChannels = new Set();
+let ports = []; // connected content script ports
+let currentAccount = null; // { login, userId, token } or null for anon
 
-  /** @param {number} winID */
-  static async markAttached(winID) {
-    const windows = await AttachedWindows.#load();
-    windows[winID] = true;
-    await AttachedWindows.#save(windows);
-  }
+// --- Settings defaults ---
+const DEFAULT_SETTINGS = {
+  fontSize: 13,
+  showTimestamps: true,
+  showBadges: true,
+  emoteProviders: { twitch: true, "7tv": true, bttv: true, ffz: true },
+  messageCap: 500,
+  chatWidth: null,
+};
 
-  /** @param {number} winID */
-  static async markDetatched(winID) {
-    const windows = await AttachedWindows.#load();
-    delete windows[winID];
-    await AttachedWindows.#save(windows);
-  }
-
-  /** @returns {Promise<number[]>} */
-  static async detachAll() {
-    const windows = await AttachedWindows.#load();
-    await AttachedWindows.#save({});
-    return Object.keys(windows).map(Number);
-  }
-
-  /** @returns {Promise<Record<number, boolean>} */
-  static #load() {
-    return chrome.storage.session
-      .get('attachedWindows')
-      .then(({ attachedWindows }) => attachedWindows ?? {})
-      .catch(() => ({}));
-  }
-
-  /** @param {Promise<Record<number, boolean>} attachedWindows */
-  static #save(attachedWindows) {
-    return chrome.storage.session.set({ attachedWindows }).catch(console.warn);
-  }
+async function getSettings() {
+  const { settings } = await chrome.storage.local.get("settings");
+  return { ...DEFAULT_SETTINGS, ...settings };
 }
 
-const debugCalls = true;
+// --- IRC ---
+function connectIRC() {
+  if (ircSocket && ircSocket.readyState <= 1) return; // already open/connecting
 
-/**
- * @typedef {{
- *    replaceTwitchChat: boolean
- * }} SettingTypes
- */
+  ircSocket = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+  ircReady = false;
 
-class Settings {
-  static #defaults = {
-    replaceTwitchChat: async () => {
-      const platform = await chrome.runtime.getPlatformInfo();
-      return platform.os === 'win';
-    },
+  ircSocket.onopen = () => {
+    ircSocket.send("CAP REQ :twitch.tv/tags twitch.tv/commands");
+    if (currentAccount) {
+      ircSocket.send(`PASS oauth:${currentAccount.token}`);
+      ircSocket.send(`NICK ${currentAccount.login}`);
+    } else {
+      const anonNick = `justinfan${Math.floor(1000 + Math.random() * 99000)}`;
+      ircSocket.send(`PASS SCHMOOPIIE`);
+      ircSocket.send(`NICK ${anonNick}`);
+    }
   };
 
-  /**
-   * @template {keyof SettingTypes} T
-   * @param {T} key
-   * @returns {Promise<SettingTypes[T]>}
-   */
-  static async get(key) {
-    const maybeVal = await this.#getOrUndefined(key);
-    if (maybeVal === undefined) {
-      return await this.#defaults[key]();
-    }
-    return maybeVal;
-  }
-
-  /**
-   * @template {keyof SettingTypes} T
-   * @param {T} key
-   * @returns {Promise<SettingTypes[T] | undefined>}
-   */
-  static async #getOrUndefined(key) {
-    try {
-      const settings = await chrome.storage.local.get(key);
-      return settings[key];
-    } catch (e) {
-      console.warn(`Failed to get ${key}`, e);
-    }
-    return undefined;
-  }
-
-  /**
-   * @template {keyof SettingTypes} T
-   * @param {T} key
-   * @param {SettingTypes[T]} value
-   */
-  static async set(key, value) {
-    try {
-      await chrome.storage.local.set({ [key]: value });
-    } catch (e) {
-      console.warn(`Failed to set {key} to`, value);
-    }
-  }
-}
-
-/// return channel name if it should contain a chat
-function matchChannelName(url) {
-  if (!url) return undefined;
-
-  const [, channelName] =
-    url.match(/^https?:\/\/(?:www\.)?twitch\.tv\/(\w+)\/?(?:\?.*)?$/) ?? [];
-
-  if (channelName && !ignoredPages.has(channelName)) {
-    return channelName;
-  }
-
-  return undefined;
-}
-
-const appName = 'com.chatterino.chatterino';
-let port = null;
-
-// gets the port for communication with chatterino
-function getPort() {
-  if (port) {
-    return port;
-  } else {
-    // XXX: add cooldown?
-    connectPort();
-
-    return port;
-  }
-}
-
-// connect to port
-function connectPort() {
-  port = chrome.runtime.connectNative(appName);
-  console.debug('port connected');
-
-  port.onMessage.addListener(msg => {
-    if (typeof msg === 'object' && msg.type === 'status') {
-      switch (msg.status) {
-        case 'exiting-host':
-          console.info(
-            `Native host is exiting: '${msg.reason ?? '<unknown>'}'`,
-          );
-          break;
-        default:
-          console.log(msg);
-          break;
+  ircSocket.onmessage = (event) => {
+    const lines = event.data.split("\r\n").filter(Boolean);
+    for (const line of lines) {
+      if (line.startsWith("PING")) {
+        ircSocket.send("PONG :tmi.twitch.tv");
+        continue;
       }
-    } else {
-      console.log(msg);
+      const msg = parseIRCMessage(line);
+      if (!msg) continue;
+
+      if (msg.command === "001") {
+        // Successfully connected
+        ircReady = true;
+        reconnectDelay = 1000;
+        // Rejoin all channels
+        for (const ch of joinedChannels) {
+          ircSocket.send(`JOIN #${ch}`);
+        }
+      }
+
+      if (
+        msg.command === "PRIVMSG" ||
+        msg.command === "CLEARCHAT" ||
+        msg.command === "CLEARMSG" ||
+        msg.command === "USERNOTICE" ||
+        msg.command === "NOTICE"
+      ) {
+        broadcast({ type: "irc-message", data: msg });
+      }
     }
+  };
+
+  ircSocket.onclose = () => {
+    ircReady = false;
+    setTimeout(() => {
+      reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+      connectIRC();
+    }, reconnectDelay);
+  };
+
+  ircSocket.onerror = () => {
+    ircSocket.close();
+  };
+}
+
+function joinChannel(channel) {
+  if (joinedChannels.has(channel)) return;
+  joinedChannels.add(channel);
+  if (ircReady) ircSocket.send(`JOIN #${channel}`);
+}
+
+function partChannel(channel) {
+  if (!joinedChannels.has(channel)) return;
+  joinedChannels.delete(channel);
+  if (ircReady) ircSocket.send(`PART #${channel}`);
+}
+
+function sendMessage(channel, text) {
+  if (!currentAccount || !ircReady) return;
+  ircSocket.send(`PRIVMSG #${channel} :${text}`);
+}
+
+function broadcast(msg) {
+  for (const port of ports) {
+    try {
+      port.postMessage(msg);
+    } catch {}
+  }
+}
+
+// --- Recent messages (robotty) ---
+async function fetchRecentMessages(channel) {
+  const res = await fetch(
+    `https://recent-messages.robotty.de/api/v2/recent-messages/${channel}`,
+  );
+  if (!res.ok) throw new Error(`recent-messages: ${res.status}`);
+  const { messages } = await res.json();
+  const parsed = [];
+  for (const raw of messages) {
+    const msg = parseIRCMessage(raw);
+    if (msg && (msg.command === "PRIVMSG" || msg.command === "CLEARCHAT" || msg.command === "CLEARMSG")) {
+      parsed.push(msg);
+    }
+  }
+  return parsed;
+}
+
+// --- Helix API helper ---
+async function helixFetch(endpoint) {
+  const account = currentAccount || (await getActiveAccount());
+  const token = account?.token;
+  const headers = { "Client-Id": CLIENT_ID };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`https://api.twitch.tv/helix/${endpoint}`, {
+    headers,
   });
-  port.onDisconnect.addListener(e => {
-    console.debug(
-      'port disconnected',
-      e?.error ?? e ?? chrome.runtime.lastError,
-    );
-
-    port = null;
-  });
+  if (!res.ok) throw new Error(`Helix ${endpoint}: ${res.status}`);
+  return res.json();
 }
 
-// disconnect from port
-function disconnectPort() {
-  if (debugCalls) console.log('disconnectPort');
-
-  if (port) {
-    port.disconnect();
-    port = null;
-  }
+async function getUserId(login) {
+  const data = await helixFetch(`users?login=${login}`);
+  return data.data?.[0]?.id || null;
 }
 
-// tab activated
-chrome.tabs.onActivated.addListener(async activeInfo => {
-  const tab = await chrome.tabs.get(activeInfo.tabId);
-  if (!tab || !tab.url) return;
+// --- Port management ---
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "chat") return;
+  ports.push(port);
 
-  const window = await chrome.windows.get(tab.windowId, {});
-  if (!window.focused) return;
+  port.onMessage.addListener(async (msg) => {
+    if (msg.type === "channel-changed") {
+      const { channel } = msg;
+      // Store port's channel for cleanup
+      port._channel = channel;
+      joinChannel(channel);
 
-  if (debugCalls) console.log('onActivated');
-
-  await onTabSelected(tab.url, tab);
-});
-
-// url changed
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (!tab.highlighted) return;
-
-  const window = await chrome.windows.get(tab.windowId, {});
-  if (!window.focused) return;
-
-  if (debugCalls) console.log('onUpdated');
-
-  onTabSelected(tab.url, tab);
-});
-
-// tab detached
-chrome.tabs.onDetached.addListener(async (tabId, detachInfo) => {
-  if (debugCalls) console.log('onDetached');
-
-  await tryDetach(detachInfo.oldWindowId);
-});
-
-// tab closed
-chrome.windows.onRemoved.addListener(async windowId => {
-  if (debugCalls) console.log('onRemoved');
-
-  await tryDetach(windowId);
-});
-
-// window selected
-chrome.windows.onFocusChanged.addListener(async windowId => {
-  console.log(windowId);
-  if (windowId == -1) return;
-
-  // this returns all tabs when the query fails
-  const tabs = await chrome.tabs.query({
-    windowId: windowId,
-    highlighted: true,
-  });
-  if (tabs.length === 1) {
-    let tab = tabs[0];
-
-    const window = await chrome.windows.get(tab.windowId);
-    if (debugCalls) console.log('onFocusChanged');
-
-    await onTabSelected(tab.url, tab);
-  }
-});
-
-// attach or detach from tab
-async function onTabSelected(url, tab) {
-  let channelName = matchChannelName(url);
-
-  if (!channelName) {
-    // detach from window
-    await tryDetach(tab.windowId);
-  }
-}
-
-function isFirefox() {
-  // Only Firefox has browser.*
-  return typeof browser !== 'undefined';
-}
-
-async function calcDisplayScaleFactor(tabId, dpr) {
-  const zoom = await chrome.tabs.getZoom(tabId);
-  let scaleFactor = dpr / zoom;
-  // On Firefox devicePixelRatio is not just zoom * scaleFactor. There seems to
-  // be some additional multiplier, which makes sure, that dimensions of the
-  // CSS pixel grid are exact integers (ex. with 175% scaling on 1080p dpr is
-  // 1.7647).
-  //
-  // To workaround that, we will assume, that display scaling is set to a
-  // multiple of 25%, which is recommend in Windows, and round to that. This
-  // will allow us to get the _actual_ zoom level later with that multiplier
-  // included, which lines up everything nicely.
-  if (isFirefox()) {
-    scaleFactor = Math.round(scaleFactor / 0.25) * 0.25;
-  }
-  return scaleFactor;
-}
-
-// receiving messages from the inject script
-chrome.runtime.onMessage.addListener((message, sender, callback) => {
-  console.log(message);
-
-  switch (message.type) {
-    case 'get-setting':
-      Settings.get(message.key).then(callback);
-      return true;
-    case 'set-setting':
-      (async () => {
-        await Settings.set(message.key, message.value);
-
-        for (const id of await AttachedWindows.detachAll()) {
-          // they're already cleared
-          await sendDetach(id);
-        }
-        await updateBadge();
-      })();
-      break;
-    case 'get-os':
-      chrome.runtime.getPlatformInfo(info => callback(info.os));
-
-      // We need to return true here so that `callback` will remain valid
-      // after this function returns. This behavior is documented here:
-      // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/runtime/onMessage
-      return true;
-      break;
-    case 'location-updated':
-      chrome.windows.get(sender.tab.windowId, {}, window => {
-        if (!window.focused) return;
-
-        let data = {
-          action: 'select',
-          type: 'twitch',
-          winId: sender.tab.windowId,
-          version: 0,
-          name: matchChannelName(sender.tab.url),
-        };
-        let port = getPort();
-
-        if (port) {
-          port.postMessage(data);
-        }
+      // Send account info
+      port.postMessage({
+        type: "account-info",
+        account: currentAccount
+          ? { login: currentAccount.login, userId: currentAccount.userId }
+          : null,
       });
-      break;
-    case 'chat-resized':
-      // is tab highlighted
-      if (!sender.tab.highlighted) return;
 
-      // is window focused
-      chrome.windows.get(sender.tab.windowId, {}, async window => {
-        if (!window.focused) return;
+      // Fetch and send badges + emotes for this channel
+      try {
+        const userId = await getUserId(channel);
+        if (userId) {
+          const [badges, emotes, settings, recentMessages] = await Promise.all([
+            fetchBadges(CLIENT_ID, currentAccount?.token, userId),
+            fetchAllEmotes(userId),
+            getSettings(),
+            fetchRecentMessages(channel).catch((e) => {
+              console.error("Failed to fetch recent messages:", e);
+              return [];
+            }),
+          ]);
+          port.postMessage({ type: "channel-data", badges, emotes, settings });
+          if (recentMessages.length) {
+            port.postMessage({ type: "recent-messages", messages: recentMessages });
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch channel data:", e);
+      }
+    }
 
-        const dpr = message.dpr ?? 1;
-        // devicePixelRatio combines both zoom and display scaling set in the
-        // system. But the UI elements (sidebars) are unaffected by the zoom
-        // level of the tab itself. So we need to separate the two.
-        const scaleFactor = await calcDisplayScaleFactor(sender.tab.id, dpr);
-        const zoom = dpr / scaleFactor;
-        // adjust for sidebars and vertical tabs
-        let xOffset = (message.viewportX ?? 0) / scaleFactor;
-        let size = {
-          x: message.rect.x * zoom + xOffset,
-          pixelRatio: 1,
-          width: Math.floor(message.rect.width * zoom),
-          height: Math.floor(message.rect.height * zoom),
-        };
+    if (msg.type === "send-message") {
+      sendMessage(msg.channel, msg.text);
+    }
 
-        // attach to window
-        await tryAttach(sender.tab.windowId, window.state == 'fullscreen', {
-          name: matchChannelName(sender.tab.url),
-          size: size,
+    if (msg.type === "get-user-profile") {
+      helixFetch(`users?login=${msg.login}`).then((data) => {
+        const user = data.data?.[0];
+        port.postMessage({
+          type: "user-profile",
+          login: msg.login,
+          profile: user
+            ? {
+                displayName: user.display_name,
+                profileImageUrl: user.profile_image_url,
+                createdAt: user.created_at,
+              }
+            : null,
         });
       });
-      break;
-    case 'detach':
-      tryDetach(sender.tab.windowId);
-      break;
-  }
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    ports = ports.filter((p) => p !== port);
+    if (port._channel) {
+      // Only part if no other port is watching this channel
+      const stillWatched = ports.some((p) => p._channel === port._channel);
+      if (!stillWatched) partChannel(port._channel);
+    }
+  });
 });
 
-// attach chatterino to a chrome window
-async function tryAttach(windowId, fullscreen, data) {
-  console.log('tryAttach ' + windowId);
-
-  data.action = 'select';
-  if (await Settings.get('replaceTwitchChat')) {
-    if (fullscreen) {
-      data.attach_fullscreen = true;
-    } else {
-      data.attach = true;
-    }
-  }
-  data.type = 'twitch';
-  data.winId = '' + windowId;
-  data.version = 0;
-
-  let port = getPort();
-
-  if (port) {
-    port.postMessage(data);
-  }
-
-  await AttachedWindows.markAttached(windowId);
-}
-
-/**
- * Detach chatterino from a chrome window
- * @param {number} windowId
- */
-async function tryDetach(windowId) {
-  if (await AttachedWindows.isAttached(windowId)) {
-    sendDetach(windowId);
-    await AttachedWindows.markDetatched(windowId);
-  }
-}
-
-function sendDetach(winID) {
-  console.log('sendDetach', { winID });
-
-  const port = getPort();
-  if (port) {
-    port.postMessage({ action: 'detach', version: 0, winId: winID.toString() });
-  }
-}
-
-async function updateBadge() {
-  chrome.action.setBadgeText({
-    text: (await Settings.get('replaceTwitchChat')) ? '' : 'off',
-  });
-}
-
-function getPreviousTabs() {
-  return chrome.storage.session
-    .get('previousTabs')
-    .then(({ previousTabs }) => new Set(previousTabs ?? []))
-    .catch(() => new Set());
-}
-
-async function setPreviousTabs(tabs) {
-  await chrome.storage.session.set({ previousTabs: [...tabs] });
-}
-
-async function syncTabs() {
-  function compareTabs(lhs, rhs) {
-    if (lhs.size !== rhs.size) {
-      return false;
-    }
-
-    for (const value of lhs) {
-      if (!rhs.has(value)) {
-        return false;
-      }
-    }
+// --- Message handler for popup ---
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === "get-accounts") {
+    getAccounts().then(sendResponse);
     return true;
   }
-
-  let previousTabs = await getPreviousTabs();
-
-  const tabs = await chrome.tabs.query({ url: '*://*.twitch.tv/*' });
-  const currentTabs = new Set(
-    tabs.map(t => matchChannelName(t.url)).filter(Boolean),
-  );
-  if (compareTabs(previousTabs, currentTabs)) {
-    return;
-  }
-  previousTabs = currentTabs;
-  console.log('sending updated tabs:', currentTabs);
-
-  const port = getPort();
-  if (port) {
-    port.postMessage({ action: 'sync', twitchChannels: [...currentTabs] });
-  }
-
-  await setPreviousTabs(previousTabs);
-}
-syncTabs();
-
-chrome.tabs.onCreated.addListener(() => syncTabs());
-chrome.tabs.onRemoved.addListener(() => syncTabs());
-chrome.tabs.onUpdated.addListener((id, changeInfo) => {
-  if ('url' in changeInfo) {
-    syncTabs();
+  if (msg.type === "account-changed") {
+    (async () => {
+      currentAccount = await getActiveAccount();
+      if (ircSocket) ircSocket.close();
+      connectIRC();
+      broadcast({
+        type: "account-info",
+        account: currentAccount
+          ? { login: currentAccount.login, userId: currentAccount.userId }
+          : null,
+      });
+      sendResponse({ ok: true });
+    })();
+    return true;
   }
 });
+
+// --- Init ---
+async function init() {
+  currentAccount = await getActiveAccount();
+  connectIRC();
+}
+
+init();

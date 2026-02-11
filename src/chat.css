@@ -1,0 +1,355 @@
+/* Converse — chat styles */
+
+#cvs-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #0e0e10;
+  color: #efeff1;
+  font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* --- Messages --- */
+
+.cvs-messages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 0;
+  scrollbar-width: none;
+}
+
+.cvs-messages::-webkit-scrollbar {
+  display: none;
+}
+
+/* --- Custom scrollbar overlay --- */
+
+.cvs-scrollbar {
+  position: absolute;
+  right: 0;
+  width: 14px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 4;
+  pointer-events: none;
+}
+
+#cvs-chat:hover .cvs-scrollbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cvs-scrollbar-thumb {
+  position: absolute;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.2);
+  min-height: 30px;
+}
+
+.cvs-scrollbar-thumb:hover,
+.cvs-scrollbar-thumb.cvs-dragging {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.cvs-line {
+  padding: var(--cvs-msg-spacing, 2px) 8px;
+  line-height: 1.4;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  background: var(--cvs-bg-odd, #0e0e10);
+}
+
+.cvs-line-even {
+  background: var(--cvs-bg-even, #111114);
+}
+
+/* --- Timestamp --- */
+
+.cvs-ts {
+  color: #898395;
+  margin-right: 6px;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Badges --- */
+
+.cvs-badge {
+  height: 18px;
+  width: auto;
+  vertical-align: middle;
+  margin-right: 3px;
+  margin-bottom: 1px;
+}
+
+/* --- Username --- */
+
+.cvs-user {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cvs-sep {
+  color: #898395;
+}
+
+/* --- Message body --- */
+
+.cvs-body {
+  word-break: break-word;
+}
+
+/* --- Emotes --- */
+
+.cvs-emote {
+  height: 28px;
+  width: auto;
+  vertical-align: middle;
+  margin: -4px 1px;
+}
+
+/* --- Pause bar --- */
+
+.cvs-pause-bar {
+  position: absolute;
+  bottom: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(120, 68, 232, 0.25);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  text-align: center;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  z-index: 5;
+}
+
+.cvs-pause-bar:hover {
+  background: rgba(120, 68, 232, 0.4);
+}
+
+.cvs-hidden {
+  display: none;
+}
+
+/* --- Input --- */
+
+.cvs-input-wrap {
+  flex-shrink: 0;
+  padding: 8px;
+  background: #18181b;
+  border-top: 1px solid #2a2a2d;
+}
+
+.cvs-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  color: #efeff1;
+  border: none;
+  padding: 6px 10px;
+  font-size: inherit;
+  font-family: inherit;
+  outline: none;
+}
+
+.cvs-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cvs-input::placeholder {
+  color: #898395;
+}
+
+/* --- Resize handle --- */
+
+.cvs-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+}
+
+.cvs-resize-handle:hover {
+  background: #9147ff;
+}
+
+/* --- Emote tooltip --- */
+
+.cvs-tooltip {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  background: rgba(15, 15, 20, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 14px;
+  max-width: 21rem;
+  text-align: center;
+  font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #efeff1;
+}
+
+.cvs-tooltip-img {
+  display: block;
+  height: 84px;
+  width: auto;
+  margin: 0 auto 8px;
+  image-rendering: auto;
+}
+
+.cvs-tooltip-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.cvs-tooltip-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.cvs-tooltip-provider {
+  font-size: 11px;
+  color: #898395;
+  white-space: nowrap;
+}
+
+.cvs-tooltip-scope {
+  font-size: 11px;
+  color: #898395;
+  margin-top: 2px;
+}
+
+/* --- Toggle chat button (in player controls) --- */
+
+#cvs-toggle-chat {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+#cvs-toggle-chat:hover {
+  color: #bf94ff;
+}
+
+/* --- Usercard --- */
+
+.cvs-usercard {
+  position: fixed;
+  z-index: 9999;
+  width: 320px;
+  max-height: 400px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(15, 15, 20, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #efeff1;
+  overflow: hidden;
+}
+
+.cvs-usercard-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.cvs-usercard-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #2a2a2d;
+}
+
+.cvs-usercard-info {
+  min-width: 0;
+}
+
+.cvs-usercard-name {
+  font-weight: 700;
+  font-size: 15px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvs-usercard-created {
+  font-size: 11px;
+  color: #898395;
+  margin-top: 2px;
+}
+
+.cvs-usercard-messages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 8px;
+  scrollbar-width: none;
+}
+
+.cvs-usercard-messages::-webkit-scrollbar {
+  display: none;
+}
+
+.cvs-usercard-empty {
+  color: #898395;
+  text-align: center;
+  padding: 16px;
+  font-size: 12px;
+}
+
+.cvs-usercard-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: #898395;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 4px;
+  padding: 0;
+}
+
+.cvs-usercard-close:hover {
+  color: #efeff1;
+  background: rgba(255, 255, 255, 0.1);
+}
