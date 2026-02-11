@@ -3,29 +3,17 @@
 
 let globalBadgesCache = null;
 
-async function fetchGlobalBadges(clientId, token) {
+async function fetchGlobalBadges(helixFetch) {
   if (globalBadgesCache) return globalBadgesCache;
-  const headers = { "Client-Id": clientId };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(
-    "https://api.twitch.tv/helix/chat/badges/global",
-    { headers },
-  );
-  if (!res.ok) throw new Error(`Global badges: ${res.status}`);
-  const { data } = await res.json();
+  const { data } = await helixFetch("chat/badges/global");
   globalBadgesCache = parseBadgeResponse(data);
   return globalBadgesCache;
 }
 
-async function fetchChannelBadges(clientId, token, broadcasterId) {
-  const headers = { "Client-Id": clientId };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(
-    `https://api.twitch.tv/helix/chat/badges?broadcaster_id=${broadcasterId}`,
-    { headers },
+async function fetchChannelBadges(helixFetch, broadcasterId) {
+  const { data } = await helixFetch(
+    `chat/badges?broadcaster_id=${broadcasterId}`,
   );
-  if (!res.ok) throw new Error(`Channel badges: ${res.status}`);
-  const { data } = await res.json();
   return parseBadgeResponse(data);
 }
 
@@ -39,10 +27,10 @@ function parseBadgeResponse(data) {
   return map;
 }
 
-export async function fetchBadges(clientId, token, broadcasterId) {
+export async function fetchBadges(helixFetch, broadcasterId) {
   const [global, channel] = await Promise.all([
-    fetchGlobalBadges(clientId, token),
-    fetchChannelBadges(clientId, token, broadcasterId),
+    fetchGlobalBadges(helixFetch),
+    fetchChannelBadges(helixFetch, broadcasterId),
   ]);
   // Channel overrides global
   return { ...global, ...channel };

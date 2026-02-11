@@ -21,12 +21,15 @@ let seenMsgIds = new Set();
 let messageBuffer = [];
 let usercardEl = null;
 let chatCollapsed = false;
+let extensionEnabled = true;
 let chatContainer = null;
 let messageList = null;
 let msgEven = false;
 let inputEl = null;
 let pauseBar = null;
 let toggleBtn = null;
+let extToggleBtn = null;
+let btnContainer = null;
 let scrollThumb = null;
 
 // --- Channel detection ---
@@ -98,8 +101,8 @@ chrome.storage.onChanged.addListener((changes) => {
 
 // --- DOM setup ---
 function buildChatUI(shell) {
-  // Clear shell contents and insert our UI
-  shell.innerHTML = "";
+  // Hide native Twitch chat children via class (keeps Twitch JS alive)
+  shell.classList.add("cvs-active");
 
   chatContainer = document.createElement("div");
   chatContainer.id = "cvs-chat";
@@ -407,6 +410,8 @@ function startResize(e) {
 // --- Chat collapse toggle ---
 
 const chatToggleSVG = `<svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M2 3h16a1 1 0 011 1v10a1 1 0 01-1 1h-5.6l-2.7 2.7a1 1 0 01-1.4 0L5.6 15H2a1 1 0 01-1-1V4a1 1 0 011-1zm1 2v8h3.4l1.6 1.6L9.6 13H17V5H3z"/></svg>`;
+// "C" logo for Converse extension toggle
+const extToggleSVG = `<svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 1.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13zm1.2 3.2a4 4 0 00-4.5 1.5.75.75 0 001.2.9 2.5 2.5 0 014.1 2.4 2.5 2.5 0 01-4.1 1.3.75.75 0 00-1.1 1A4 4 0 1011.2 6.7z"/></svg>`;
 
 function collapsedCSS() {
   if (isTheatreMode()) {
@@ -465,17 +470,56 @@ function updateToggleIcon() {
   toggleBtn.style.opacity = chatCollapsed ? "0.5" : "1";
 }
 
+function toggleExtension() {
+  extensionEnabled = !extensionEnabled;
+  const shell = document.querySelector(".chat-shell, [class*='chat-shell']");
+  if (!extensionEnabled) {
+    // Show native Twitch chat, hide Converse
+    if (shell) shell.classList.remove("cvs-active");
+    if (cvsStyleEl) cvsStyleEl.textContent = "";
+  } else {
+    // Show Converse, hide native Twitch chat
+    if (shell) shell.classList.add("cvs-active");
+    if (chatCollapsed) {
+      ensureResizeStyle();
+      cvsStyleEl.textContent = collapsedCSS();
+    } else if (settings.chatWidth) {
+      setChatWidth(settings.chatWidth);
+    }
+  }
+  updateExtToggleIcon();
+}
+
+function updateExtToggleIcon() {
+  if (!extToggleBtn) return;
+  extToggleBtn.style.opacity = extensionEnabled ? "1" : "0.5";
+}
+
 function injectToggleButton() {
-  const group = document.querySelector(".player-controls__right-control-group");
-  if (!group || group.querySelector("#cvs-toggle-chat")) return;
+  // Place buttons in a container anchored to top-right of the player area
+  const player = document.querySelector(".persistent-player");
+  if (!player || document.querySelector("#cvs-btn-container")) return;
+
+  btnContainer = document.createElement("div");
+  btnContainer.id = "cvs-btn-container";
+
+  extToggleBtn = document.createElement("button");
+  extToggleBtn.id = "cvs-toggle-ext";
+  extToggleBtn.title = "Toggle Converse / Twitch chat";
+  extToggleBtn.innerHTML = extToggleSVG;
+  extToggleBtn.addEventListener("click", toggleExtension);
 
   toggleBtn = document.createElement("button");
   toggleBtn.id = "cvs-toggle-chat";
-  toggleBtn.title = "Toggle chat";
+  toggleBtn.title = "Toggle chat visibility";
   toggleBtn.innerHTML = chatToggleSVG;
   toggleBtn.addEventListener("click", toggleChat);
-  group.appendChild(toggleBtn);
+
+  btnContainer.appendChild(extToggleBtn);
+  btnContainer.appendChild(toggleBtn);
+  player.appendChild(btnContainer);
   updateToggleIcon();
+  updateExtToggleIcon();
 }
 
 // --- IRC message rendering ---

@@ -1,5 +1,10 @@
 /* Converse — chat styles */
 
+/* When Converse is active, hide all native Twitch chat children */
+.cvs-active > :not(#cvs-chat) {
+  display: none !important;
+}
+
 #cvs-chat {
   display: flex;
   flex-direction: column;
@@ -10,6 +15,11 @@
   font-size: 13px;
   position: relative;
   overflow: hidden;
+}
+
+/* When Converse is disabled, hide our chat */
+:not(.cvs-active) > #cvs-chat {
+  display: none !important;
 }
 
 /* --- Messages --- */
@@ -237,9 +247,25 @@
   margin-top: 2px;
 }
 
-/* --- Toggle chat button (in player controls) --- */
+/* --- Toggle buttons (top-right of player) --- */
 
-#cvs-toggle-chat {
+#cvs-btn-container {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 50;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.persistent-player:hover #cvs-btn-container {
+  opacity: 1;
+}
+
+#cvs-toggle-chat,
+#cvs-toggle-ext {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -247,14 +273,17 @@
   height: 32px;
   padding: 0;
   border: none;
-  background: transparent;
+  background: rgba(0, 0, 0, 0.6);
   color: #fff;
   cursor: pointer;
   transition: opacity 0.15s;
+  border-radius: 4px;
 }
 
-#cvs-toggle-chat:hover {
+#cvs-toggle-chat:hover,
+#cvs-toggle-ext:hover {
   color: #bf94ff;
+  background: rgba(0, 0, 0, 0.8);
 }
 
 /* --- Usercard --- */

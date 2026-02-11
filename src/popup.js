@@ -63,64 +63,9 @@ async function renderAccounts() {
   }
 }
 
-addAccountBtn.addEventListener("click", async () => {
-  try {
-    // Dynamically import auth helpers — we can't use ES modules in popup
-    // so we talk to background instead
-    const CLIENT_ID = await getClientId();
-    const SCOPES = "chat:read chat:edit";
-    const redirectUrl = chrome.identity.getRedirectURL();
-    const authUrl =
-      `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}` +
-      `&redirect_uri=${encodeURIComponent(redirectUrl)}` +
-      `&response_type=token&scope=${encodeURIComponent(SCOPES)}&force_verify=true`;
-
-    const responseUrl = await chrome.identity.launchWebAuthFlow({
-      url: authUrl,
-      interactive: true,
-    });
-
-    const hash = new URL(responseUrl).hash.substring(1);
-    const params = new URLSearchParams(hash);
-    const token = params.get("access_token");
-    if (!token) throw new Error("No access token");
-
-    // Validate
-    const validation = await fetch(
-      "https://id.twitch.tv/oauth2/validate",
-      { headers: { Authorization: `OAuth ${token}` } },
-    );
-    if (!validation.ok) throw new Error("Validation failed");
-    const info = await validation.json();
-
-    // Store
-    let { accounts } = await chrome.storage.local.get("accounts");
-    accounts = accounts || [];
-    for (const a of accounts) a.active = false;
-    const idx = accounts.findIndex((a) => a.userId === info.user_id);
-    const account = {
-      login: info.login,
-      userId: info.user_id,
-      token,
-      active: true,
-    };
-    if (idx >= 0) accounts[idx] = account;
-    else accounts.push(account);
-    await chrome.storage.local.set({ accounts });
-    chrome.runtime.sendMessage({ type: "account-changed" });
-    renderAccounts();
-  } catch (e) {
-    console.error("OAuth failed:", e);
-  }
+addAccountBtn.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "add-account" });
 });
-
-async function getClientId() {
-  // Read from background's auth module via a message
-  return new Promise((resolve) => {
-    // We embed the client ID here for simplicity — must match lib/auth.js
-    resolve("8nt0ugk7fjossuquolsvewm056awxo");
-  });
-}
 
 // --- Settings ---
 const fontSizeEl = document.getElementById("fontSize");
@@ -222,6 +167,11 @@ epTwitch.addEventListener("change", saveSettings);
 ep7tv.addEventListener("change", saveSettings);
 epBttv.addEventListener("change", saveSettings);
 epFfz.addEventListener("change", saveSettings);
+
+// --- Storage changes (e.g. background finishes OAuth after popup reopens) ---
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.accounts) renderAccounts();
+});
 
 // --- Init ---
 renderAccounts();

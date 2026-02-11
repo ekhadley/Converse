@@ -14,7 +14,7 @@ let ircReady = false;
 let reconnectDelay = 1000;
 let joinedChannels = new Set();
 let ports = []; // connected content script ports
-let currentAccount = null; // { login, userId, token } or null for anon
+let currentAccount = null; // { login, userId, token }
 
 // --- Settings defaults ---
 const DEFAULT_SETTINGS = {
@@ -33,6 +33,7 @@ async function getSettings() {
 
 // --- IRC ---
 function connectIRC() {
+  if (!currentAccount) return;
   if (ircSocket && ircSocket.readyState <= 1) return; // already open/connecting
 
   ircSocket = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
@@ -40,14 +41,8 @@ function connectIRC() {
 
   ircSocket.onopen = () => {
     ircSocket.send("CAP REQ :twitch.tv/tags twitch.tv/commands");
-    if (currentAccount) {
-      ircSocket.send(`PASS oauth:${currentAccount.token}`);
-      ircSocket.send(`NICK ${currentAccount.login}`);
-    } else {
-      const anonNick = `justinfan${Math.floor(1000 + Math.random() * 99000)}`;
-      ircSocket.send(`PASS SCHMOOPIIE`);
-      ircSocket.send(`NICK ${anonNick}`);
-    }
+    ircSocket.send(`PASS oauth:${currentAccount.token}`);
+    ircSocket.send(`NICK ${currentAccount.login}`);
   };
 
   ircSocket.onmessage = (event) => {
@@ -137,17 +132,65 @@ async function fetchRecentMessages(channel) {
   return parsed;
 }
 
+// --- Silent re-auth ---
+let reauthPromise = null;
+
+async function silentReauth() {
+  if (reauthPromise) return reauthPromise;
+  reauthPromise = (async () => {
+    try {
+      const redirectUrl = chrome.identity.getRedirectURL();
+      const authUrl =
+        `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}` +
+        `&redirect_uri=${encodeURIComponent(redirectUrl)}` +
+        `&response_type=token&scope=${encodeURIComponent("chat:read chat:edit")}`;
+      const responseUrl = await chrome.identity.launchWebAuthFlow({
+        url: authUrl,
+        interactive: false,
+        abortOnLoadForNonInteractive: false,
+        timeoutMsForNonInteractive: 10000,
+      });
+      const hash = new URL(responseUrl).hash.substring(1);
+      const token = new URLSearchParams(hash).get("access_token");
+      if (!token) throw new Error("No token");
+      const validation = await validateToken(token);
+      if (!validation) throw new Error("Invalid token");
+      const accounts = await getAccounts();
+      const idx = accounts.findIndex((a) => a.userId === currentAccount.userId);
+      if (idx >= 0) {
+        accounts[idx].token = token;
+        await chrome.storage.local.set({ accounts });
+      }
+      currentAccount = { ...currentAccount, token };
+      if (ircSocket) ircSocket.close();
+      connectIRC();
+      return true;
+    } catch (e) {
+      console.error("Silent re-auth failed:", e);
+      currentAccount = null;
+      broadcast({ type: "account-info", account: null });
+      return false;
+    } finally {
+      reauthPromise = null;
+    }
+  })();
+  return reauthPromise;
+}
+
 // --- Helix API helper ---
 async function helixFetch(endpoint) {
-  const account = currentAccount || (await getActiveAccount());
-  const token = account?.token;
-  const headers = { "Client-Id": CLIENT_ID };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`https://api.twitch.tv/helix/${endpoint}`, {
-    headers,
-  });
-  if (!res.ok) throw new Error(`Helix ${endpoint}: ${res.status}`);
-  return res.json();
+  if (!currentAccount) throw new Error("Not authenticated");
+  const doFetch = () =>
+    fetch(`https://api.twitch.tv/helix/${endpoint}`, {
+      headers: { "Client-Id": CLIENT_ID, Authorization: `Bearer ${currentAccount.token}` },
+    });
+  const res = await doFetch();
+  if (res.ok) return res.json();
+  if (res.status === 401 && (await silentReauth())) {
+    const retry = await doFetch();
+    if (retry.ok) return retry.json();
+  }
+  throw new Error(`Helix ${endpoint}: ${res.status}`);
 }
 
 async function getUserId(login) {
@@ -176,13 +219,17 @@ chrome.runtime.onConnect.addListener((port) => {
       });
 
       // Fetch and send badges + emotes for this channel
+      const settings = await getSettings();
+      if (!currentAccount) {
+        port.postMessage({ type: "channel-data", badges: {}, emotes: {}, settings });
+        return;
+      }
       try {
         const userId = await getUserId(channel);
         if (userId) {
-          const [badges, emotes, settings, recentMessages] = await Promise.all([
-            fetchBadges(CLIENT_ID, currentAccount?.token, userId),
+          const [badges, emotes, recentMessages] = await Promise.all([
+            fetchBadges(helixFetch, userId),
             fetchAllEmotes(userId),
-            getSettings(),
             fetchRecentMessages(channel).catch((e) => {
               console.error("Failed to fetch recent messages:", e);
               return [];
@@ -203,6 +250,10 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     if (msg.type === "get-user-profile") {
+      if (!currentAccount) {
+        port.postMessage({ type: "user-profile", login: msg.login, profile: null });
+        return;
+      }
       helixFetch(`users?login=${msg.login}`).then((data) => {
         const user = data.data?.[0];
         port.postMessage({
@@ -234,6 +285,58 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "get-accounts") {
     getAccounts().then(sendResponse);
+    return true;
+  }
+  if (msg.type === "add-account") {
+    (async () => {
+      try {
+        const redirectUrl = chrome.identity.getRedirectURL();
+        const authUrl =
+          `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}` +
+          `&redirect_uri=${encodeURIComponent(redirectUrl)}` +
+          `&response_type=token&scope=${encodeURIComponent("chat:read chat:edit")}&force_verify=true`;
+
+        const responseUrl = await chrome.identity.launchWebAuthFlow({
+          url: authUrl,
+          interactive: true,
+        });
+
+        const hash = new URL(responseUrl).hash.substring(1);
+        const params = new URLSearchParams(hash);
+        const token = params.get("access_token");
+        if (!token) throw new Error("No access token");
+
+        const validation = await validateToken(token);
+        if (!validation) throw new Error("Validation failed");
+
+        let accounts = await getAccounts();
+        for (const a of accounts) a.active = false;
+        const idx = accounts.findIndex((a) => a.userId === validation.user_id);
+        const account = {
+          login: validation.login,
+          userId: validation.user_id,
+          token,
+          active: true,
+        };
+        if (idx >= 0) accounts[idx] = account;
+        else accounts.push(account);
+        await chrome.storage.local.set({ accounts });
+
+        // Reconnect IRC with new account
+        currentAccount = account;
+        if (ircSocket) ircSocket.close();
+        connectIRC();
+        broadcast({
+          type: "account-info",
+          account: { login: account.login, userId: account.userId },
+        });
+
+        sendResponse({ ok: true });
+      } catch (e) {
+        console.error("OAuth failed:", e);
+        sendResponse({ error: e.message });
+      }
+    })();
     return true;
   }
   if (msg.type === "account-changed") {
