@@ -173,6 +173,14 @@ chrome.storage.onChanged.addListener((changes) => {
   if (changes.accounts) renderAccounts();
 });
 
+// --- Header actions ---
+document.getElementById("open-extensions").addEventListener("click", () => {
+  chrome.tabs.create({ url: "chrome://extensions" });
+});
+document.getElementById("reload-ext").addEventListener("click", () => {
+  chrome.runtime.reload();
+});
+
 // --- Init ---
 renderAccounts();
 loadSettings();

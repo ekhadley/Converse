@@ -210,10 +210,15 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [ ] Extension toggle — swap between native Twitch chat and extension chat without disabling the extension entirely
 - [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
 - [ ] Channel point redeems. Currently only show up as normal messages.
-- [ ] Player controls hover — rightmost Twitch player controls (theater mode, fullscreen) are unreachable because the chat column overlaps that region, causing Twitch's hover detection to hide the controls when the cursor crosses into chat
 - [ ] Chat input restyle — hide the input box when not hovering; on hover, show it as a rounded floating box overlayed on chat history (like the "scroll to top" pause bar style)
+
+## Popup Header Buttons
+Top-right of the popup has two icon buttons: wrench opens `chrome://extensions`, refresh arrow calls `chrome.runtime.reload()` to reload the extension source.
+
+## Player Controls Hover Fix
+The `chatWidthCSS()` `playerChildCap` rule uses `.persistent-player > *` to force `height: 100%` on the player child chain. This selector must exclude `#cvs-btn-container` (our toggle buttons injected into the player) via `:not(#cvs-btn-container)`, otherwise the button container stretches to the full player height and steals hover from Twitch's controls layer.
 
 ## Extension Reload Rules
 - Content script / CSS changes: just reload the Twitch tab.
-- Background script / manifest changes: reload extension on chrome://extensions, then reload tab.
+- Background script / manifest changes: use the reload button in the popup header, then reload tab.
 - Popup changes: close and reopen the popup.

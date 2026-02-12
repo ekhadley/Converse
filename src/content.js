@@ -302,7 +302,7 @@ function chatWidthCSS(w, dragging) {
   // padding-bottom:0 neutralizes tw-aspect's aspect ratio enforcement.
   // height:100% + object-fit:contain handles letterboxing + centering.
   const playerChildCap = `
-    .persistent-player > *,
+    .persistent-player > :not(#cvs-btn-container),
     .persistent-player [class*='video-player'],
     .persistent-player [class*='video-player__container'],
     .persistent-player [class*='video-ref'] {
