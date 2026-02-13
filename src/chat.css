@@ -107,6 +107,18 @@
   color: #898395;
 }
 
+/* --- Mentions --- */
+
+.cvs-mention {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cvs-line-mention {
+  background: rgba(145, 71, 255, 0.12) !important;
+  border-left: 2px solid #9147ff;
+}
+
 /* --- Message body --- */
 
 .cvs-body {
@@ -164,13 +176,14 @@
   padding: 4px 8px;
   z-index: 5;
   opacity: 0;
-  transition: opacity 0.15s;
+  transition: opacity 0s;
   pointer-events: none;
 }
 
 #cvs-chat:hover .cvs-input-wrap,
 .cvs-input-wrap:focus-within {
   opacity: 1;
+  transition: opacity 0.15s;
   pointer-events: auto;
 }
 

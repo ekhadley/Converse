@@ -31,6 +31,7 @@ let toggleBtn = null;
 let extToggleBtn = null;
 let btnContainer = null;
 let scrollThumb = null;
+let userColors = {}; // username -> color from Twitch IRC tags
 
 // --- Channel detection ---
 function getChannel() {
@@ -127,10 +128,13 @@ function buildChatUI(shell) {
   messageList.addEventListener("mouseleave", hideTooltip);
   messageList.addEventListener("click", (e) => {
     const userSpan = e.target.closest(".cvs-user");
-    if (!userSpan) return;
-    const line = userSpan.closest(".cvs-line");
-    if (!line) return;
-    openUsercard(line.dataset.user, e);
+    if (userSpan) {
+      const line = userSpan.closest(".cvs-line");
+      if (line) openUsercard(line.dataset.user, e);
+      return;
+    }
+    const mention = e.target.closest(".cvs-mention");
+    if (mention) openUsercard(mention.dataset.user, e);
   });
 
   // Pause bar
@@ -613,12 +617,15 @@ function handleIRCMessage(msg) {
     }
   }
 
+  // Track user color from IRC tags
+  if (msg.tags?.color) userColors[msg.username] = msg.tags.color;
+
   // Username
   const userSpan = document.createElement("span");
   userSpan.className = "cvs-user";
   const displayName = msg.tags?.["display-name"] || msg.username;
   userSpan.textContent = displayName;
-  const color = msg.tags?.color || hashColor(msg.username);
+  const color = msg.tags?.color || userColors[msg.username] || hashColor(msg.username);
   userSpan.style.color = color;
   line.appendChild(userSpan);
 
@@ -633,6 +640,12 @@ function handleIRCMessage(msg) {
   bodySpan.className = "cvs-body";
   renderMessageBody(bodySpan, msg.trailing || "", msg.tags?.emotes);
   line.appendChild(bodySpan);
+
+  // Highlight messages that mention the logged-in user
+  if (account && msg.trailing) {
+    const mentionRe = new RegExp(`@${account.login}\\b`, "i");
+    if (mentionRe.test(msg.trailing)) line.classList.add("cvs-line-mention");
+  }
 
   messageList.appendChild(line);
   pruneMessages();
@@ -696,6 +709,15 @@ function renderMessageBody(container, text, emotesTag) {
           img.dataset.provider = emote.provider;
           img.dataset.scope = emote.scope || "global";
           container.appendChild(img);
+        } else if (/^@[a-zA-Z0-9_]+/.test(word)) {
+          const mention = document.createElement("span");
+          mention.className = "cvs-mention";
+          const login = word.slice(1).toLowerCase();
+          const mentionColor = userColors[login] || hashColor(login);
+          mention.style.color = mentionColor;
+          mention.textContent = word;
+          mention.dataset.user = login;
+          container.appendChild(mention);
         } else {
           container.appendChild(document.createTextNode(word));
         }

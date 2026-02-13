@@ -62,7 +62,10 @@ Floating input overlaid on chat messages. Hidden by default (`opacity: 0`), appe
 Messages alternate odd/even backgrounds via `cvs-line-even` class. Colors set via CSS custom properties `--cvs-bg-odd` / `--cvs-bg-even`, configurable in popup settings.
 
 ### Username Colors
-Uses `msg.tags.color` if present, otherwise generates a deterministic HSL color from a hash of the username.
+Uses `msg.tags.color` if present, falls back to `userColors` map (populated from previous messages by that user), then generates a deterministic HSL color from a hash of the username. The `userColors` map persists across channel switches since Twitch colors are global. This ensures local echo messages and @mentions use the user's real Twitch color.
+
+### @Mention Highlighting
+Words starting with `@` followed by a valid username pattern are rendered as `.cvs-mention` spans — bold, colored (using the mentioned user's color from `userColors` or hash fallback), and clickable (opens usercard). Messages that mention the logged-in user get a `.cvs-line-mention` class: purple-tinted background with a left border accent.
 
 ### Account Management
 OAuth flow via `chrome.identity.launchWebAuthFlow` with scopes `chat:read chat:edit`. Multiple accounts stored in `chrome.storage.local`, one active at a time. Switch/remove from popup. Changing account closes IRC and reconnects.
@@ -199,7 +202,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ## TODO
 - [ ] Emote autocomplete — type `:` or start a word in input, dropdown of matching emotes from loaded set, tab to complete
 - [ ] Username autocomplete — tab-complete usernames from `messageBuffer` for @mentions
-- [ ] Username highlighting — when @user_name shows up in chat, style it and make it clickable to show the usercard
+- [x] Username highlighting — when @user_name shows up in chat, style it and make it clickable to show the usercard
 - [ ] Reply threading — render reply-parent IRC tags with visual indicator (quoted parent text or reply line) instead of flat
 - [ ] Reply thread view. Clicking a reply thread message shows a popup chat or similar to scroll through.
 - [ ] Input history (up arrow) — press up in input to cycle through previously sent messages
@@ -210,7 +213,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [ ] Channel point redeems. Currently only show up as normal messages.
 - [x] Chat input restyle — hide the input box when not hovering; on hover, show it as a rounded floating box overlayed on chat history (like the "scroll to top" pause bar style)
 - [ ] Very wide emotes are getting squished when hovered in the tooltip becuase of the fixed size of the popup.
-- [ ] Username colors — local echo messages should use the user's actual Twitch color (from their settings) instead of the hash-based fallback
+- [x] Username colors — local echo messages should use the user's actual Twitch color (from their settings) instead of the hash-based fallback
 
 ## Popup Header Buttons
 Top-right of the popup has two icon buttons: wrench opens `chrome://extensions`, refresh arrow calls `chrome.runtime.reload()` to reload the extension source.
