@@ -157,6 +157,17 @@ function buildChatUI(shell) {
           channel: currentChannel,
           text,
         });
+        // Local echo — Twitch IRC doesn't echo back your own PRIVMSGs
+        handleIRCMessage({
+          command: "PRIVMSG",
+          channel: currentChannel,
+          username: account.login,
+          trailing: text,
+          tags: {
+            "display-name": account.login,
+            "tmi-sent-ts": String(Date.now()),
+          },
+        });
         inputEl.value = "";
       }
     }

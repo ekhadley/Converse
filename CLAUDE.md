@@ -52,7 +52,7 @@ A button (`#cvs-toggle-chat`) injected into `.player-controls__right-control-gro
 Chat auto-scrolls to bottom. When user scrolls up (>30px from bottom), `autoScroll` is set false and the "Chat paused" bar appears. Clicking the bar or scrolling back to bottom resumes.
 
 ### Chat Input
-Text input at bottom of chat. Sends `PRIVMSG` via background port on Enter. Shows "Chat as {username}" when logged in, "Log in to chat" (disabled) when anonymous.
+Floating input overlaid on chat messages. Hidden by default (`opacity: 0`), appears on `#cvs-chat:hover` or when focused (`:focus-within`). Styled as a rounded blurred box matching the pause bar aesthetic. Sends `PRIVMSG` via background port on Enter, then creates a local echo (synthetic IRC message rendered via `handleIRCMessage`) since Twitch IRC doesn't echo back your own PRIVMSGs. Shows "Chat as {username}" when logged in, "Log in to chat" (disabled) when anonymous.
 
 ### Message Moderation
 - `CLEARCHAT` with trailing: removes all messages from that user. Without trailing: clears entire chat.
@@ -203,14 +203,14 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [ ] Reply threading — render reply-parent IRC tags with visual indicator (quoted parent text or reply line) instead of flat
 - [ ] Reply thread view. Clicking a reply thread message shows a popup chat or similar to scroll through.
 - [ ] Input history (up arrow) — press up in input to cycle through previously sent messages
-- [ ] Chat box broken — sent messages don't appear in chat
 - [ ] Gift sub alerts — display gift sub events in chat
 - [ ] First message highlights — visually highlight a user's first message in the channel
 - [ ] Channel points counter — display current channel points balance
-- [ ] Extension toggle — swap between native Twitch chat and extension chat without disabling the extension entirely
 - [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
 - [ ] Channel point redeems. Currently only show up as normal messages.
-- [ ] Chat input restyle — hide the input box when not hovering; on hover, show it as a rounded floating box overlayed on chat history (like the "scroll to top" pause bar style)
+- [x] Chat input restyle — hide the input box when not hovering; on hover, show it as a rounded floating box overlayed on chat history (like the "scroll to top" pause bar style)
+- [ ] Very wide emotes are getting squished when hovered in the tooltip becuase of the fixed size of the popup.
+- [ ] Username colors — local echo messages should use the user's actual Twitch color (from their settings) instead of the hash-based fallback
 
 ## Popup Header Buttons
 Top-right of the popup has two icon buttons: wrench opens `chrome://extensions`, refresh arrow calls `chrome.runtime.reload()` to reload the extension source.
