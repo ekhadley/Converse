@@ -17,17 +17,17 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 ## Architecture
 
 ### Communication
-Content script connects a long-lived port (`name: "chat"`) to the background service worker. Messages:
+Content script connects a long-lived port (`name: "chat"`) to the background service worker. On port disconnect (e.g. service worker restart), the content script reconnects and re-sends `channel-changed` to restore state. `broadcast()` in background auto-prunes dead ports. Messages:
 - **content -> background:** `channel-changed`, `send-message`, `get-user-profile`
 - **background -> content:** `irc-message`, `recent-messages`, `channel-data` (badges + emotes + settings), `account-info`, `user-profile`
 
 Settings changes propagate via `chrome.storage.onChanged` listener in content script.
 
 ### IRC Connection
-Single WebSocket to `wss://irc-ws.chat.twitch.tv:443`. Requests `twitch.tv/tags` and `twitch.tv/commands` capabilities. Authenticates as the active account or anonymous (`justinfan`). Reconnects with exponential backoff (1s to 30s). Joins/parts channels based on which content script ports are active — only parts when no port is watching a channel.
+Single WebSocket to `wss://irc-ws.chat.twitch.tv:443`. Requests `twitch.tv/tags` and `twitch.tv/commands` capabilities. Authenticates as the active account or anonymous (`justinfan`). Reconnects with exponential backoff (1s to 30s). Joins/parts channels based on which content script ports are active — only parts when no port is watching a channel. Client-side PING sent every 60s; if no PONG received before the next ping, the connection is assumed dead and force-closed. Handles Twitch `RECONNECT` command by closing the socket to trigger reconnect.
 
 ### Channel Detection
-`getChannel()` parses `location.pathname` for a channel name, excluding known non-channel paths (directory, settings, payments, etc.). Polled every 1.5s + on MutationObserver fires. On channel change: clears messages, clears `seenMsgIds`, resets `messageBuffer`, closes usercard.
+`getChannel()` parses `location.pathname` for a channel name, excluding known non-channel paths (directory, settings, payments, etc.). Polled every 1.5s + on MutationObserver fires. On channel change: clears messages, clears `seenMsgIds`, resets `messageBuffer`, closes usercard. When navigating away from a channel (channel becomes null), resize CSS overrides are cleared so Twitch can manage the player (mini-player, PiP, etc.).
 
 ### Recent Messages
 On channel join, fetches backfill from `recent-messages.robotty.de`. Deduplication via `seenMsgIds` Set (keyed on `msg.tags.id`) prevents overlap with live messages.
@@ -52,7 +52,7 @@ A button (`#cvs-toggle-chat`) injected into `.player-controls__right-control-gro
 Chat auto-scrolls to bottom. When user scrolls up (>30px from bottom), `autoScroll` is set false and the "Chat paused" bar appears. Clicking the bar or scrolling back to bottom resumes.
 
 ### Chat Input
-Floating input overlaid on chat messages. Hidden by default (`opacity: 0`), appears on `#cvs-chat:hover` or when focused (`:focus-within`). Styled as a rounded blurred box matching the pause bar aesthetic. Sends `PRIVMSG` via background port on Enter, then creates a local echo (synthetic IRC message rendered via `handleIRCMessage`) since Twitch IRC doesn't echo back your own PRIVMSGs. Shows "Chat as {username}" when logged in, "Log in to chat" (disabled) when anonymous.
+Static input at the bottom of the chat column. Styled as a rounded box with a subtle border, always visible. Sends `PRIVMSG` via background port on Enter, then creates a local echo (synthetic IRC message rendered via `handleIRCMessage`) since Twitch IRC doesn't echo back your own PRIVMSGs. Shows "Chat as {username}" when logged in, "Log in to chat" (disabled) when anonymous.
 
 ### Message Moderation
 - `CLEARCHAT` with trailing: removes all messages from that user. Without trailing: clears entire chat.
@@ -200,6 +200,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ---
 
 ## TODO
+- [x] When page gets horizontally rescaled, make chat %width be constant, not absolute width
 - [ ] Emote autocomplete — type `:` or start a word in input, dropdown of matching emotes from loaded set, tab to complete
 - [ ] Username autocomplete — tab-complete usernames from `messageBuffer` for @mentions
 - [x] Username highlighting — when @user_name shows up in chat, style it and make it clickable to show the usercard
@@ -211,12 +212,12 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [ ] Channel points counter — display current channel points balance
 - [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
 - [ ] Channel point redeems. Currently only show up as normal messages.
-- [x] Chat input restyle — hide the input box when not hovering; on hover, show it as a rounded floating box overlayed on chat history (like the "scroll to top" pause bar style)
-- [ ] Very wide emotes are getting squished when hovered in the tooltip becuase of the fixed size of the popup.
+- [x] Chat input restyle — rounded box, static at bottom of chat column (not floating/overlay)
+- [x] Very wide emotes are getting squished when hovered in the tooltip because of the fixed size of the popup.
 - [x] Username colors — local echo messages should use the user's actual Twitch color (from their settings) instead of the hash-based fallback
 
-## Popup Header Buttons
-Top-right of the popup has two icon buttons: wrench opens `chrome://extensions`, refresh arrow calls `chrome.runtime.reload()` to reload the extension source.
+## Icons
+All icons are inline SVGs using Font Awesome 6 Free Solid paths (no FA CSS/fonts bundled). Content script toggle buttons: `fa-comment` (chat toggle), `fa-puzzle-piece` (extension toggle). Popup header buttons: `fa-wrench` (opens `chrome://extensions`), `fa-rotate-right` (calls `chrome.runtime.reload()`).
 
 ## Player Controls Hover Fix
 The `chatWidthCSS()` `playerChildCap` rule uses `.persistent-player > *` to force `height: 100%` on the player child chain. This selector must exclude `#cvs-btn-container` (our toggle buttons injected into the player) via `:not(#cvs-btn-container)`, otherwise the button container stretches to the full player height and steals hover from Twitch's controls layer.

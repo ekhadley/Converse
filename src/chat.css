@@ -138,7 +138,7 @@
 
 .cvs-pause-bar {
   position: absolute;
-  bottom: 48px;
+  bottom: 8px;
   left: 50%;
   transform: translateX(-50%);
   background: rgba(120, 68, 232, 0.25);
@@ -165,26 +165,12 @@
 /* --- Input --- */
 
 .cvs-input-wrap {
-  position: absolute;
-  bottom: 8px;
-  left: 8px;
-  right: 8px;
+  flex-shrink: 0;
+  margin: 8px;
   background: rgba(24, 24, 27, 0.85);
-  backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 10px;
   padding: 4px 8px;
-  z-index: 5;
-  opacity: 0;
-  transition: opacity 0s;
-  pointer-events: none;
-}
-
-#cvs-chat:hover .cvs-input-wrap,
-.cvs-input-wrap:focus-within {
-  opacity: 1;
-  transition: opacity 0.15s;
-  pointer-events: auto;
 }
 
 .cvs-input {
@@ -236,7 +222,7 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   padding: 10px 14px;
-  max-width: 21rem;
+  width: max-content;
   text-align: center;
   font-family: Inter, "Helvetica Neue", Helvetica, Arial, sans-serif;
   color: #efeff1;

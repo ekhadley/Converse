@@ -12,6 +12,8 @@ import { fetchAllEmotes } from "./lib/emotes.js";
 let ircSocket = null;
 let ircReady = false;
 let reconnectDelay = 1000;
+let ircPingInterval = null;
+let ircPongReceived = true;
 let joinedChannels = new Set();
 let ports = []; // connected content script ports
 let currentAccount = null; // { login, userId, token }
@@ -59,10 +61,21 @@ function connectIRC() {
         // Successfully connected
         ircReady = true;
         reconnectDelay = 1000;
+        startIRCPing();
         // Rejoin all channels
         for (const ch of joinedChannels) {
           ircSocket.send(`JOIN #${ch}`);
         }
+      }
+
+      if (msg.command === "PONG") {
+        ircPongReceived = true;
+        continue;
+      }
+
+      if (msg.command === "RECONNECT") {
+        ircSocket.close();
+        continue;
       }
 
       if (
@@ -79,6 +92,8 @@ function connectIRC() {
 
   ircSocket.onclose = () => {
     ircReady = false;
+    clearInterval(ircPingInterval);
+    ircPingInterval = null;
     setTimeout(() => {
       reconnectDelay = Math.min(reconnectDelay * 2, 30000);
       connectIRC();
@@ -88,6 +103,22 @@ function connectIRC() {
   ircSocket.onerror = () => {
     ircSocket.close();
   };
+}
+
+function startIRCPing() {
+  clearInterval(ircPingInterval);
+  ircPongReceived = true;
+  ircPingInterval = setInterval(() => {
+    if (!ircReady) return;
+    if (!ircPongReceived) {
+      // No PONG since last ping — connection is dead
+      console.warn("IRC ping timeout, reconnecting");
+      ircSocket.close();
+      return;
+    }
+    ircPongReceived = false;
+    ircSocket.send("PING :converse");
+  }, 60000);
 }
 
 function joinChannel(channel) {
@@ -108,11 +139,14 @@ function sendMessage(channel, text) {
 }
 
 function broadcast(msg) {
-  for (const port of ports) {
+  ports = ports.filter((port) => {
     try {
       port.postMessage(msg);
-    } catch {}
-  }
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 // --- Recent messages (robotty) ---

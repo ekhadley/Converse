@@ -82,6 +82,11 @@ function connectPort() {
     if (!chrome.runtime?.id) return;
     setTimeout(connectPort, 1000);
   });
+
+  // Re-announce channel so background rejoins after service worker restart
+  if (currentChannel) {
+    port.postMessage({ type: "channel-changed", channel: currentChannel });
+  }
 }
 
 // --- Settings ---
@@ -92,7 +97,7 @@ function applySettings(s) {
     chatContainer.style.setProperty("--cvs-msg-spacing", settings.messageSpacing + "px");
     if (settings.bgOdd) chatContainer.style.setProperty("--cvs-bg-odd", settings.bgOdd);
     if (settings.bgEven) chatContainer.style.setProperty("--cvs-bg-even", settings.bgEven);
-    if (settings.chatWidth) setChatWidth(settings.chatWidth);
+    if (settings.chatWidth) setChatWidth(getChatWidthPx());
   }
 }
 
@@ -296,6 +301,15 @@ function startScrollDrag(e) {
 
 let cvsStyleEl = null;
 
+// Chat width is stored as a ratio (0-1) of viewport width.
+// Legacy pixel values (> 1) are auto-converted.
+function getChatWidthPx() {
+  const cw = settings.chatWidth;
+  if (!cw) return 340;
+  if (cw > 1) return cw; // legacy absolute pixels
+  return Math.round(cw * window.innerWidth);
+}
+
 function ensureResizeStyle() {
   if (cvsStyleEl) return;
   cvsStyleEl = document.createElement("style");
@@ -411,9 +425,10 @@ function startResize(e) {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
     setChatWidth(lastWidth);
+    const ratio = lastWidth / window.innerWidth;
     chrome.storage.local.get("settings", ({ settings: s }) => {
       chrome.storage.local.set({
-        settings: { ...settings, ...s, chatWidth: lastWidth },
+        settings: { ...settings, ...s, chatWidth: ratio },
       });
     });
   }
@@ -424,9 +439,8 @@ function startResize(e) {
 
 // --- Chat collapse toggle ---
 
-const chatToggleSVG = `<svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M2 3h16a1 1 0 011 1v10a1 1 0 01-1 1h-5.6l-2.7 2.7a1 1 0 01-1.4 0L5.6 15H2a1 1 0 01-1-1V4a1 1 0 011-1zm1 2v8h3.4l1.6 1.6L9.6 13H17V5H3z"/></svg>`;
-// "C" logo for Converse extension toggle
-const extToggleSVG = `<svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 1.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13zm1.2 3.2a4 4 0 00-4.5 1.5.75.75 0 001.2.9 2.5 2.5 0 014.1 2.4 2.5 2.5 0 01-4.1 1.3.75.75 0 00-1.1 1A4 4 0 1011.2 6.7z"/></svg>`;
+const chatToggleSVG = `<svg width="20" height="20" viewBox="0 0 512 512" fill="currentColor"><path d="M512 240c0 114.9-114.6 208-256 208c-37.1 0-72.3-6.4-104.1-17.9c-11.9 8.7-31.3 20.6-54.3 30.6C73.6 471.1 44.7 480 16 480c-6.5 0-12.3-3.9-14.8-9.9c-2.5-6-1.1-12.8 3.4-17.4l.3-.3c.3-.3 .7-.7 1.3-1.4c1.1-1.2 2.8-3.1 4.9-5.7c4.1-5 9.6-12.4 15.2-21.6c10-16.6 19.5-38.4 21.4-62.9C17.7 326.8 0 285.1 0 240C0 125.1 114.6 32 256 32s256 93.1 256 208z"/></svg>`;
+const extToggleSVG = `<svg width="20" height="20" viewBox="0 0 512 512" fill="currentColor"><path d="M192 104.8c0-9.2-5.8-17.3-13.2-22.8C167.2 73.3 160 61.3 160 48c0-26.5 28.7-48 64-48s64 21.5 64 48c0 13.3-7.2 25.3-18.8 34c-7.4 5.5-13.2 13.6-13.2 22.8c0 12.8 10.4 23.2 23.2 23.2l56.8 0c26.5 0 48 21.5 48 48l0 56.8c0 12.8 10.4 23.2 23.2 23.2c9.2 0 17.3-5.8 22.8-13.2c8.7-11.6 20.7-18.8 34-18.8c26.5 0 48 28.7 48 64s-21.5 64-48 64c-13.3 0-25.3-7.2-34-18.8c-5.5-7.4-13.6-13.2-22.8-13.2c-12.8 0-23.2 10.4-23.2 23.2L384 464c0 26.5-21.5 48-48 48l-56.8 0c-12.8 0-23.2-10.4-23.2-23.2c0-9.2 5.8-17.3 13.2-22.8c11.6-8.7 18.8-20.7 18.8-34c0-26.5-28.7-48-64-48s-64 21.5-64 48c0 13.3 7.2 25.3 18.8 34c7.4 5.5 13.2 13.6 13.2 22.8c0 12.8-10.4 23.2-23.2 23.2L48 512c-26.5 0-48-21.5-48-48L0 343.2C0 330.4 10.4 320 23.2 320c9.2 0 17.3 5.8 22.8 13.2C54.7 344.8 66.7 352 80 352c26.5 0 48-28.7 48-64s-21.5-64-48-64c-13.3 0-25.3 7.2-34 18.8C40.5 250.2 32.4 256 23.2 256C10.4 256 0 245.6 0 232.8L0 176c0-26.5 21.5-48 48-48l120.8 0c12.8 0 23.2-10.4 23.2-23.2z"/></svg>`;
 
 function collapsedCSS() {
   if (isTheatreMode()) {
@@ -474,8 +488,7 @@ function toggleChat() {
   if (chatCollapsed) {
     cvsStyleEl.textContent = collapsedCSS();
   } else {
-    const w = settings.chatWidth || 340;
-    setChatWidth(w);
+    setChatWidth(getChatWidthPx());
   }
   updateToggleIcon();
 }
@@ -499,7 +512,7 @@ function toggleExtension() {
       ensureResizeStyle();
       cvsStyleEl.textContent = collapsedCSS();
     } else if (settings.chatWidth) {
-      setChatWidth(settings.chatWidth);
+      setChatWidth(getChatWidthPx());
     }
   }
   updateExtToggleIcon();
@@ -973,6 +986,9 @@ function pollChannel() {
     if (ch && port) {
       port.postMessage({ type: "channel-changed", channel: ch });
     }
+    // Navigated away from a channel — clear resize overrides so Twitch
+    // can manage the player (mini-player, PiP, etc.)
+    if (!ch && cvsStyleEl) cvsStyleEl.textContent = "";
     // Clear messages on channel switch
     if (messageList) messageList.innerHTML = "";
     seenMsgIds.clear();
@@ -992,7 +1008,7 @@ const observer = new MutationObserver(() => {
     const theatre = isTheatreMode();
     if (theatre !== lastTheatreMode) {
       lastTheatreMode = theatre;
-      setChatWidth(settings.chatWidth);
+      setChatWidth(getChatWidthPx());
     }
   }
 });
@@ -1004,6 +1020,12 @@ function init() {
   pollChannel();
 
   observer.observe(document.body, { childList: true, subtree: true });
+
+  // Recalculate chat width on window resize to maintain proportional width
+  window.addEventListener("resize", () => {
+    if (!settings.chatWidth || !cvsStyleEl || chatCollapsed || !extensionEnabled) return;
+    setChatWidth(getChatWidthPx());
+  });
 
   // Also poll periodically as a fallback for SPA navigations
   setInterval(pollChannel, 1500);
