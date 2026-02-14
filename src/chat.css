@@ -200,7 +200,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  width: 4px;
+  width: 8px;
   height: 100%;
   cursor: col-resize;
   z-index: 10;
