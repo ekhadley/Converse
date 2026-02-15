@@ -137,10 +137,8 @@
 /* --- Pause bar --- */
 
 .cvs-pause-bar {
-  position: absolute;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
+  flex-shrink: 0;
+  align-self: center;
   background: rgba(120, 68, 232, 0.25);
   backdrop-filter: blur(4px);
   color: #fff;
@@ -274,7 +272,8 @@
   transition: opacity 0.15s;
 }
 
-.persistent-player:hover #cvs-btn-container {
+.persistent-player:hover #cvs-btn-container,
+#cvs-btn-container:hover {
   opacity: 1;
 }
 

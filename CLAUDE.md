@@ -200,6 +200,8 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ---
 
 ## TODO
+- [x] Losing hover focus making buttons disappear near the right edge of the stream view when in theatre mode
+- [x] 'Chat Paused' bar is sitting on top  of the input box
 - [x] When page gets horizontally rescaled, make chat %width be constant, not absolute width
 - [ ] Emote autocomplete — type `:` or start a word in input, dropdown of matching emotes from loaded set, tab to complete
 - [ ] Username autocomplete — tab-complete usernames from `messageBuffer` for @mentions
