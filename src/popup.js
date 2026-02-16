@@ -68,6 +68,8 @@ addAccountBtn.addEventListener("click", () => {
 });
 
 // --- Settings ---
+const hideChatEl = document.getElementById("hideChat");
+const useNativeChatEl = document.getElementById("useNativeChat");
 const fontSizeEl = document.getElementById("fontSize");
 const fontSizeDec = document.getElementById("fontSizeDec");
 const fontSizeInc = document.getElementById("fontSizeInc");
@@ -89,6 +91,8 @@ const epFfz = document.getElementById("ep-ffz");
 async function loadSettings() {
   const { settings } = await chrome.storage.local.get("settings");
   const s = { ...DEFAULT_SETTINGS, ...settings };
+  hideChatEl.checked = !!s.hideChat;
+  useNativeChatEl.checked = !!s.useNativeChat;
   fontSizeEl.value = s.fontSize;
   msgSpacingEl.value = s.messageSpacing;
   showTimestampsEl.checked = s.showTimestamps;
@@ -106,6 +110,8 @@ async function loadSettings() {
 
 function readSettings() {
   return {
+    hideChat: hideChatEl.checked,
+    useNativeChat: useNativeChatEl.checked,
     fontSize: parseInt(fontSizeEl.value),
     messageSpacing: parseInt(msgSpacingEl.value),
     showTimestamps: showTimestampsEl.checked,
@@ -122,8 +128,9 @@ function readSettings() {
   };
 }
 
-function saveSettings() {
-  const s = readSettings();
+async function saveSettings() {
+  const { settings: existing } = await chrome.storage.local.get("settings");
+  const s = { ...existing, ...readSettings() };
   chrome.storage.local.set({ settings: s });
 }
 
@@ -167,10 +174,13 @@ epTwitch.addEventListener("change", saveSettings);
 ep7tv.addEventListener("change", saveSettings);
 epBttv.addEventListener("change", saveSettings);
 epFfz.addEventListener("change", saveSettings);
+hideChatEl.addEventListener("change", saveSettings);
+useNativeChatEl.addEventListener("change", saveSettings);
 
 // --- Storage changes (e.g. background finishes OAuth after popup reopens) ---
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.accounts) renderAccounts();
+  if (changes.settings) loadSettings();
 });
 
 // --- Header actions ---

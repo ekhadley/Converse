@@ -18,10 +18,11 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 
 ### Communication
 Content script connects a long-lived port (`name: "chat"`) to the background service worker. On port disconnect (e.g. service worker restart), the content script reconnects and re-sends `channel-changed` to restore state. `broadcast()` in background auto-prunes dead ports. Messages:
-- **content -> background:** `channel-changed`, `send-message`, `get-user-profile`
-- **background -> content:** `irc-message`, `recent-messages`, `channel-data` (badges + emotes + settings), `account-info`, `user-profile`
+- **content -> background (port):** `channel-changed`, `send-message`, `get-user-profile`
+- **background -> content (port):** `irc-message`, `recent-messages`, `channel-data` (badges + emotes + settings), `account-info`, `user-profile`
+- **content -> background (runtime message):** `open-extensions`, `reload-extension`
 
-Settings changes propagate via `chrome.storage.onChanged` listener in content script.
+Settings changes propagate via `chrome.storage.onChanged` listener in content script. Content script cannot call `chrome.tabs.create()` or `chrome.runtime.reload()` directly — these are proxied through runtime messages to the background script.
 
 ### IRC Connection
 Single WebSocket to `wss://irc-ws.chat.twitch.tv:443`. Requests `twitch.tv/tags` and `twitch.tv/commands` capabilities. Authenticates as the active account or anonymous (`justinfan`). Reconnects with exponential backoff (1s to 30s). Joins/parts channels based on which content script ports are active — only parts when no port is watching a channel. Client-side PING sent every 60s; if no PONG received before the next ping, the connection is assumed dead and force-closed. Handles Twitch `RECONNECT` command by closing the socket to trigger reconnect.
@@ -45,11 +46,11 @@ Hover an emote to see a 3x preview, name, provider label (7TV/BetterTTV/FrankerF
 ### Usercard
 Click a username to open a card showing avatar, display name, account creation date, and that user's message history from the current session (from `messageBuffer`). Profile fetched via Helix `users?login=` API. Positioned with top-right at click point, opens left and down. Dismissed by close button or click-outside.
 
-### Chat Collapse Toggle
-A button (`#cvs-toggle-chat`) injected into `.player-controls__right-control-group`. Toggles chat column to width 0 with CSS overrides (mode-aware, same as resize). Button opacity dims to 0.5 when collapsed. Starting a resize drag un-collapses.
+### Chat Collapse / Extension Toggle
+Controlled via `hideChat` and `useNativeChat` settings in `chrome.storage.local`. `hideChat` collapses the chat column to width 0 with CSS overrides (mode-aware, same as resize). `useNativeChat` removes the `cvs-active` class from the chat-shell, showing Twitch's native chat. Both are togglable from the in-chat settings panel and the extension popup. Starting a resize drag clears `hideChat`. `applyChatVisibility()` reads these settings and applies the appropriate state.
 
 ### Auto-scroll / Pause Bar
-Chat auto-scrolls to bottom. When user scrolls up (>30px from bottom), `autoScroll` is set false and the "Chat paused" bar appears. Clicking the bar or scrolling back to bottom resumes.
+Chat auto-scrolls to bottom. When user scrolls up (>30px from bottom), `autoScroll` is set false and the "Chat paused" bar appears as an absolute-positioned overlay above the input (does not reserve vertical space or push messages). Clicking the bar or scrolling back to bottom resumes.
 
 ### Chat Input
 Static input at the bottom of the chat column. Styled as a rounded box with a subtle border, always visible. Sends `PRIVMSG` via background port on Enter, then creates a local echo (synthetic IRC message rendered via `handleIRCMessage`) since Twitch IRC doesn't echo back your own PRIVMSGs. Shows "Chat as {username}" when logged in, "Log in to chat" (disabled) when anonymous.
@@ -70,12 +71,18 @@ Words starting with `@` followed by a valid username pattern are rendered as `.c
 ### Account Management
 OAuth flow via `chrome.identity.launchWebAuthFlow` with scopes `chat:read chat:edit`. Multiple accounts stored in `chrome.storage.local`, one active at a time. Switch/remove from popup. Changing account closes IRC and reconnects.
 
-### Settings (Popup)
-Font size (10-20), message spacing (0-20), timestamps toggle, badges toggle, message cap (100-2000), odd/even row background colors, emote provider toggles (Twitch/7TV/BTTV/FFZ). All persisted to `chrome.storage.local` under `settings` key. Applied live to content script.
+### Settings
+Two access points, both read/write the same `chrome.storage.local` `settings` key, applied live via `chrome.storage.onChanged`:
+
+**Extension popup** (`popup.html`/`popup.js`): Account management + all settings. `saveSettings()` merges with existing storage to preserve keys it doesn't manage (e.g. `chatWidth`).
+
+**In-chat settings panel**: Gear icon (`.cvs-settings-btn`) in top-right of `#cvs-chat`, visible on hover. Click toggles a dropdown panel (`.cvs-settings-panel`) with the full settings menu: hide chat, use Twitch chat, timestamps, badges, font size, spacing, message cap, row colors, emote providers, plus extension actions (open chrome://extensions, reload extension). Click-outside dismisses. Extension action buttons proxy through runtime messages to the background since content scripts lack `chrome.tabs.create()`/`chrome.runtime.reload()` access.
+
+Settings: font size (10-20), message spacing (0-20), timestamps toggle, badges toggle, message cap (100-2000), odd/even row background colors, emote provider toggles (Twitch/7TV/BTTV/FFZ), hide chat, use native Twitch chat.
 
 ## Current State of Chat Resize Feature
 
-The resize handle is on the left edge of `#cvs-chat`. Dragging left makes chat wider, dragging right makes it narrower. Width is persisted to `chrome.storage.local` under `settings.chatWidth`.
+The resize handle is a sibling of `#cvs-chat` in the chat-shell (not a child, to avoid `overflow: hidden` clipping). It spans the border between player and chat — 28px wide, extending 14px into the player area for easy grabbing. No visual indicator; only the `col-resize` cursor. Dragging left makes chat wider, dragging right makes it narrower. Width is persisted to `chrome.storage.local` under `settings.chatWidth`.
 
 ### Architecture
 Resize works by injecting a single `<style id="cvs-resize-overrides">` element with `!important` CSS rules. The CSS is regenerated on every drag frame and when mode changes. `chatWidthCSS(w, dragging)` generates mode-specific CSS. `isTheatreMode()` detects the current mode. A MutationObserver watches for mode switches and re-applies the CSS.
@@ -214,17 +221,15 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [ ] Channel points counter — display current channel points balance
 - [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
 - [ ] Channel point redeems. Currently only show up as normal messages.
+- [ ] VOD support — make the extension work on VOD pages
 - [x] Chat input restyle — rounded box, static at bottom of chat column (not floating/overlay)
 - [x] Very wide emotes are getting squished when hovered in the tooltip because of the fixed size of the popup.
 - [x] Username colors — local echo messages should use the user's actual Twitch color (from their settings) instead of the hash-based fallback
 
 ## Icons
-All icons are inline SVGs using Font Awesome 6 Free Solid paths (no FA CSS/fonts bundled). Content script toggle buttons: `fa-comment` (chat toggle), `fa-puzzle-piece` (extension toggle). Popup header buttons: `fa-wrench` (opens `chrome://extensions`), `fa-rotate-right` (calls `chrome.runtime.reload()`).
-
-## Player Controls Hover Fix
-The `chatWidthCSS()` `playerChildCap` rule uses `.persistent-player > *` to force `height: 100%` on the player child chain. This selector must exclude `#cvs-btn-container` (our toggle buttons injected into the player) via `:not(#cvs-btn-container)`, otherwise the button container stretches to the full player height and steals hover from Twitch's controls layer.
+All icons are inline SVGs using Font Awesome 6 Free Solid paths (no FA CSS/fonts bundled). In-chat settings: `fa-gear`. Popup header: `fa-wrench` (opens `chrome://extensions`), `fa-rotate-right` (reload extension). Both sets of action buttons are also in the in-chat settings panel footer.
 
 ## Extension Reload Rules
 - Content script / CSS changes: just reload the Twitch tab.
-- Background script / manifest changes: use the reload button in the popup header, then reload tab.
+- Background script / manifest changes: use the reload button in the popup header or in-chat settings panel, then reload tab.
 - Popup changes: close and reopen the popup.

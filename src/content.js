@@ -27,9 +27,7 @@ let messageList = null;
 let msgEven = false;
 let inputEl = null;
 let pauseBar = null;
-let toggleBtn = null;
-let extToggleBtn = null;
-let btnContainer = null;
+let settingsPanel = null;
 let scrollThumb = null;
 let userColors = {}; // username -> color from Twitch IRC tags
 
@@ -97,7 +95,56 @@ function applySettings(s) {
     chatContainer.style.setProperty("--cvs-msg-spacing", settings.messageSpacing + "px");
     if (settings.bgOdd) chatContainer.style.setProperty("--cvs-bg-odd", settings.bgOdd);
     if (settings.bgEven) chatContainer.style.setProperty("--cvs-bg-even", settings.bgEven);
-    if (settings.chatWidth) setChatWidth(getChatWidthPx());
+  }
+  applyChatVisibility();
+  updateSettingsPanel();
+}
+
+function applyChatVisibility() {
+  const shell = document.querySelector(".chat-shell, [class*='chat-shell']");
+  extensionEnabled = !settings.useNativeChat;
+  chatCollapsed = !!settings.hideChat;
+  if (!extensionEnabled) {
+    if (shell) shell.classList.remove("cvs-active");
+    if (cvsStyleEl) cvsStyleEl.textContent = "";
+  } else {
+    if (shell) shell.classList.add("cvs-active");
+    if (chatCollapsed) {
+      ensureResizeStyle();
+      cvsStyleEl.textContent = collapsedCSS();
+    } else if (settings.chatWidth) {
+      setChatWidth(getChatWidthPx());
+    } else if (cvsStyleEl) {
+      cvsStyleEl.textContent = "";
+    }
+  }
+}
+
+function saveSetting(key, value) {
+  chrome.storage.local.get("settings", ({ settings: s }) => {
+    chrome.storage.local.set({ settings: { ...s, [key]: value } });
+  });
+}
+
+function updateSettingsPanel() {
+  if (!settingsPanel) return;
+  for (const input of settingsPanel.querySelectorAll("[data-setting]")) {
+    const key = input.dataset.setting;
+    const val = key.startsWith("ep-")
+      ? settings.emoteProviders?.[key.slice(3)]
+      : settings[key];
+    if (input.type === "checkbox") input.checked = !!val;
+    else input.value = val ?? "";
+  }
+  for (const sw of settingsPanel.querySelectorAll("[data-swatch]")) {
+    sw.style.background = settings[sw.dataset.swatch] || "";
+  }
+}
+
+function closeSettingsPanel(e) {
+  if (settingsPanel && !settingsPanel.contains(e.target) && !e.target.closest(".cvs-settings-btn")) {
+    settingsPanel.classList.add("cvs-hidden");
+    document.removeEventListener("click", closeSettingsPanel);
   }
 }
 
@@ -202,13 +249,121 @@ function buildChatUI(shell) {
   });
   messageList.addEventListener("scroll", updateScrollbar);
 
+  // Settings gear button + full settings panel
+  const settingsBtn = document.createElement("button");
+  settingsBtn.className = "cvs-settings-btn";
+  settingsBtn.title = "Settings";
+  settingsBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 512 512" fill="currentColor"><path d="M495.9 166.6c3.2 8.7 .5 18.4-6.4 24.6l-43.3 39.4c1.1 8.3 1.7 16.8 1.7 25.4s-.6 17.1-1.7 25.4l43.3 39.4c6.9 6.2 9.6 15.9 6.4 24.6c-4.4 11.9-9.7 23.3-15.8 34.3l-4.7 8.1c-6.6 11-14 21.4-22.1 31.2c-5.9 7.2-15.7 9.6-24.5 6.8l-55.7-17.7c-13.4 10.3-28.2 18.9-44 25.4l-12.5 57.1c-2 9.1-9 16.3-18.2 17.8c-13.8 2.3-28 3.5-42.5 3.5s-28.7-1.2-42.5-3.5c-9.2-1.5-16.2-8.7-18.2-17.8l-12.5-57.1c-15.8-6.5-30.6-15.1-44-25.4L83.1 425.9c-8.8 2.8-18.6 .3-24.5-6.8c-8.1-9.8-15.5-20.2-22.1-31.2l-4.7-8.1c-6.1-11-11.4-22.4-15.8-34.3c-3.2-8.7-.5-18.4 6.4-24.6l43.3-39.4C64.6 273.1 64 264.6 64 256s.6-17.1 1.7-25.4L22.4 191.2c-6.9-6.2-9.6-15.9-6.4-24.6c4.4-11.9 9.7-23.3 15.8-34.3l4.7-8.1c6.6-11 14-21.4 22.1-31.2c5.9-7.2 15.7-9.6 24.5-6.8l55.7 17.7c13.4-10.3 28.2-18.9 44-25.4l12.5-57.1c2-9.1 9-16.3 18.2-17.8C227.3 1.2 241.5 0 256 0s28.7 1.2 42.5 3.5c9.2 1.5 16.2 8.7 18.2 17.8l12.5 57.1c15.8 6.5 30.6 15.1 44 25.4l55.7-17.7c8.8-2.8 18.6-.3 24.5 6.8c8.1 9.8 15.5 20.2 22.1 31.2l4.7 8.1c6.1 11 11.4 22.4 15.8 34.3zM256 336a80 80 0 1 0 0-160 80 80 0 1 0 0 160z"/></svg>`;
+  settingsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    settingsPanel.classList.toggle("cvs-hidden");
+    if (!settingsPanel.classList.contains("cvs-hidden")) {
+      setTimeout(() => document.addEventListener("click", closeSettingsPanel), 0);
+    }
+  });
+
+  settingsPanel = document.createElement("div");
+  settingsPanel.className = "cvs-settings-panel cvs-hidden";
+
+  // Toggle rows
+  const toggles = [
+    { label: "Hide chat", key: "hideChat" },
+    { label: "Twitch chat", key: "useNativeChat" },
+    { label: "Timestamps", key: "showTimestamps" },
+    { label: "Badges", key: "showBadges" },
+  ];
+  for (const { label, key } of toggles) {
+    const row = document.createElement("div");
+    row.className = "cvs-settings-row";
+    row.innerHTML = `<span>${label}</span><label class="cvs-toggle"><input type="checkbox" data-setting="${key}"><span class="cvs-slider"></span></label>`;
+    row.querySelector("input").checked = !!settings[key];
+    row.querySelector("input").addEventListener("change", (e) => saveSetting(key, e.target.checked));
+    settingsPanel.appendChild(row);
+  }
+
+  // Spinner rows
+  const spinners = [
+    { label: "Font size", key: "fontSize", min: 10, max: 20 },
+    { label: "Spacing", key: "messageSpacing", min: 0, max: 20 },
+  ];
+  for (const { label, key, min, max } of spinners) {
+    const row = document.createElement("div");
+    row.className = "cvs-settings-row";
+    row.innerHTML = `<span>${label}</span><div class="cvs-spinner"><button>\u2212</button><input type="number" data-setting="${key}" min="${min}" max="${max}"><button>+</button></div>`;
+    const input = row.querySelector("input");
+    const [dec, inc] = row.querySelectorAll("button");
+    input.value = settings[key] ?? min;
+    dec.addEventListener("click", () => { input.value = Math.max(min, parseInt(input.value) - 1); saveSetting(key, parseInt(input.value)); });
+    inc.addEventListener("click", () => { input.value = Math.min(max, parseInt(input.value) + 1); saveSetting(key, parseInt(input.value)); });
+    input.addEventListener("change", () => { input.value = Math.max(min, Math.min(max, parseInt(input.value))); saveSetting(key, parseInt(input.value)); });
+    settingsPanel.appendChild(row);
+  }
+
+  // Message cap
+  const capRow = document.createElement("div");
+  capRow.className = "cvs-settings-row";
+  capRow.innerHTML = `<span>Msg cap</span><input type="number" class="cvs-settings-num" data-setting="messageCap" min="100" max="2000">`;
+  capRow.querySelector("input").value = settings.messageCap ?? 500;
+  capRow.querySelector("input").addEventListener("change", (e) => {
+    e.target.value = Math.max(100, Math.min(2000, parseInt(e.target.value)));
+    saveSetting("messageCap", parseInt(e.target.value));
+  });
+  settingsPanel.appendChild(capRow);
+
+  // Color rows
+  for (const { label, key } of [{ label: "Odd bg", key: "bgOdd" }, { label: "Even bg", key: "bgEven" }]) {
+    const row = document.createElement("div");
+    row.className = "cvs-settings-row";
+    row.innerHTML = `<span>${label}</span><div class="cvs-color-field"><span class="cvs-swatch" data-swatch="${key}"></span><input type="text" data-setting="${key}" maxlength="7"></div>`;
+    const input = row.querySelector("input");
+    const swatch = row.querySelector(".cvs-swatch");
+    input.value = settings[key] || "";
+    swatch.style.background = settings[key] || "";
+    input.addEventListener("input", () => {
+      if (/^#[0-9a-fA-F]{6}$/.test(input.value)) {
+        swatch.style.background = input.value;
+        saveSetting(key, input.value);
+      }
+    });
+    settingsPanel.appendChild(row);
+  }
+
+  // Emote providers
+  const emoteRow = document.createElement("div");
+  emoteRow.className = "cvs-settings-row cvs-settings-emotes";
+  emoteRow.innerHTML = `<span>Emotes</span><div class="cvs-emote-checks"></div>`;
+  const emoteChecks = emoteRow.querySelector(".cvs-emote-checks");
+  for (const [key, name] of [["twitch", "Tw"], ["7tv", "7TV"], ["bttv", "BT"], ["ffz", "FFZ"]]) {
+    const lbl = document.createElement("label");
+    lbl.innerHTML = `<input type="checkbox" data-setting="ep-${key}"> ${name}`;
+    lbl.querySelector("input").checked = settings.emoteProviders?.[key] !== false;
+    lbl.querySelector("input").addEventListener("change", (e) => {
+      chrome.storage.local.get("settings", ({ settings: s }) => {
+        chrome.storage.local.set({ settings: { ...s, emoteProviders: { ...s?.emoteProviders, [key]: e.target.checked } } });
+      });
+    });
+    emoteChecks.appendChild(lbl);
+  }
+  settingsPanel.appendChild(emoteRow);
+
+  // Extension actions
+  const actionsRow = document.createElement("div");
+  actionsRow.className = "cvs-settings-actions";
+  actionsRow.innerHTML = `<button title="Chrome extensions page"><svg width="12" height="12" viewBox="0 0 512 512" fill="currentColor"><path d="M352 320c88.4 0 160-71.6 160-160c0-15.3-2.2-30.1-6.2-44.2c-3.1-10.8-16.4-13.2-24.3-5.3l-76.8 76.8c-3 3-7.1 4.7-11.3 4.7L336 192c-8.8 0-16-7.2-16-16l0-57.4c0-4.2 1.7-8.3 4.7-11.3l76.8-76.8c7.9-7.9 5.4-21.2-5.3-24.3C382.1 2.2 367.3 0 352 0C263.6 0 192 71.6 192 160c0 19.1 3.4 37.5 9.5 54.5L19.9 396.1C7.2 408.8 0 426.1 0 444.1C0 481.6 30.4 512 67.9 512c18 0 35.3-7.2 48-19.9L297.5 310.5c17 6.2 35.4 9.5 54.5 9.5zM80 408a24 24 0 1 1 0 48 24 24 0 1 1 0-48z"/></svg></button><button title="Reload extension"><svg width="12" height="12" viewBox="0 0 512 512" fill="currentColor"><path d="M463.5 224l8.5 0c13.3 0 24-10.7 24-24l0-128c0-9.7-5.8-18.5-14.8-22.2s-19.3-1.7-26.2 5.2L413.4 96.6c-87.6-86.5-228.7-86.2-315.8 1c-87.5 87.5-87.5 229.3 0 316.8s229.3 87.5 316.8 0c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0c-62.5 62.5-163.8 62.5-226.3 0s-62.5-163.8 0-226.3c62.2-62.2 162.7-62.5 225.3-1L327 183c-6.9 6.9-8.9 17.2-5.2 26.2s12.5 14.8 22.2 14.8l119.5 0z"/></svg></button>`;
+  const [extBtn, reloadBtn] = actionsRow.querySelectorAll("button");
+  extBtn.addEventListener("click", () => chrome.runtime.sendMessage({ type: "open-extensions" }));
+  reloadBtn.addEventListener("click", () => chrome.runtime.sendMessage({ type: "reload-extension" }));
+  settingsPanel.appendChild(actionsRow);
+
   inputWrap.appendChild(inputEl);
-  chatContainer.appendChild(resizeHandle);
   chatContainer.appendChild(messageList);
   chatContainer.appendChild(scrollbar);
   chatContainer.appendChild(pauseBar);
   chatContainer.appendChild(inputWrap);
+  chatContainer.appendChild(settingsBtn);
+  chatContainer.appendChild(settingsPanel);
   shell.appendChild(chatContainer);
+  shell.appendChild(resizeHandle);
 }
 
 function updateInputPlaceholder() {
@@ -331,7 +486,7 @@ function chatWidthCSS(w, dragging) {
   // padding-bottom:0 neutralizes tw-aspect's aspect ratio enforcement.
   // height:100% + object-fit:contain handles letterboxing + centering.
   const playerChildCap = `
-    .persistent-player > :not(#cvs-btn-container),
+    .persistent-player > *,
     .persistent-player [class*='video-player'],
     .persistent-player [class*='video-player__container'],
     .persistent-player [class*='video-ref'] {
@@ -408,7 +563,9 @@ function startResize(e) {
   e.preventDefault();
   if (chatCollapsed) {
     chatCollapsed = false;
-    updateToggleIcon();
+    chrome.storage.local.get("settings", ({ settings: s }) => {
+      chrome.storage.local.set({ settings: { ...s, hideChat: false } });
+    });
   }
   const startX = e.clientX;
   const startWidth = chatContainer.getBoundingClientRect().width;
@@ -437,10 +594,7 @@ function startResize(e) {
   document.addEventListener("mouseup", onUp);
 }
 
-// --- Chat collapse toggle ---
-
-const chatToggleSVG = `<svg width="20" height="20" viewBox="0 0 512 512" fill="currentColor"><path d="M512 240c0 114.9-114.6 208-256 208c-37.1 0-72.3-6.4-104.1-17.9c-11.9 8.7-31.3 20.6-54.3 30.6C73.6 471.1 44.7 480 16 480c-6.5 0-12.3-3.9-14.8-9.9c-2.5-6-1.1-12.8 3.4-17.4l.3-.3c.3-.3 .7-.7 1.3-1.4c1.1-1.2 2.8-3.1 4.9-5.7c4.1-5 9.6-12.4 15.2-21.6c10-16.6 19.5-38.4 21.4-62.9C17.7 326.8 0 285.1 0 240C0 125.1 114.6 32 256 32s256 93.1 256 208z"/></svg>`;
-const extToggleSVG = `<svg width="20" height="20" viewBox="0 0 512 512" fill="currentColor"><path d="M192 104.8c0-9.2-5.8-17.3-13.2-22.8C167.2 73.3 160 61.3 160 48c0-26.5 28.7-48 64-48s64 21.5 64 48c0 13.3-7.2 25.3-18.8 34c-7.4 5.5-13.2 13.6-13.2 22.8c0 12.8 10.4 23.2 23.2 23.2l56.8 0c26.5 0 48 21.5 48 48l0 56.8c0 12.8 10.4 23.2 23.2 23.2c9.2 0 17.3-5.8 22.8-13.2c8.7-11.6 20.7-18.8 34-18.8c26.5 0 48 28.7 48 64s-21.5 64-48 64c-13.3 0-25.3-7.2-34-18.8c-5.5-7.4-13.6-13.2-22.8-13.2c-12.8 0-23.2 10.4-23.2 23.2L384 464c0 26.5-21.5 48-48 48l-56.8 0c-12.8 0-23.2-10.4-23.2-23.2c0-9.2 5.8-17.3 13.2-22.8c11.6-8.7 18.8-20.7 18.8-34c0-26.5-28.7-48-64-48s-64 21.5-64 48c0 13.3 7.2 25.3 18.8 34c7.4 5.5 13.2 13.6 13.2 22.8c0 12.8-10.4 23.2-23.2 23.2L48 512c-26.5 0-48-21.5-48-48L0 343.2C0 330.4 10.4 320 23.2 320c9.2 0 17.3 5.8 22.8 13.2C54.7 344.8 66.7 352 80 352c26.5 0 48-28.7 48-64s-21.5-64-48-64c-13.3 0-25.3 7.2-34 18.8C40.5 250.2 32.4 256 23.2 256C10.4 256 0 245.6 0 232.8L0 176c0-26.5 21.5-48 48-48l120.8 0c12.8 0 23.2-10.4 23.2-23.2z"/></svg>`;
+// --- Chat collapse ---
 
 function collapsedCSS() {
   if (isTheatreMode()) {
@@ -480,74 +634,6 @@ function collapsedCSS() {
       padding-right: 0 !important;
     }
   `;
-}
-
-function toggleChat() {
-  chatCollapsed = !chatCollapsed;
-  ensureResizeStyle();
-  if (chatCollapsed) {
-    cvsStyleEl.textContent = collapsedCSS();
-  } else {
-    setChatWidth(getChatWidthPx());
-  }
-  updateToggleIcon();
-}
-
-function updateToggleIcon() {
-  if (!toggleBtn) return;
-  toggleBtn.style.opacity = chatCollapsed ? "0.5" : "1";
-}
-
-function toggleExtension() {
-  extensionEnabled = !extensionEnabled;
-  const shell = document.querySelector(".chat-shell, [class*='chat-shell']");
-  if (!extensionEnabled) {
-    // Show native Twitch chat, hide Converse
-    if (shell) shell.classList.remove("cvs-active");
-    if (cvsStyleEl) cvsStyleEl.textContent = "";
-  } else {
-    // Show Converse, hide native Twitch chat
-    if (shell) shell.classList.add("cvs-active");
-    if (chatCollapsed) {
-      ensureResizeStyle();
-      cvsStyleEl.textContent = collapsedCSS();
-    } else if (settings.chatWidth) {
-      setChatWidth(getChatWidthPx());
-    }
-  }
-  updateExtToggleIcon();
-}
-
-function updateExtToggleIcon() {
-  if (!extToggleBtn) return;
-  extToggleBtn.style.opacity = extensionEnabled ? "1" : "0.5";
-}
-
-function injectToggleButton() {
-  // Place buttons in a container anchored to top-right of the player area
-  const player = document.querySelector(".persistent-player");
-  if (!player || document.querySelector("#cvs-btn-container")) return;
-
-  btnContainer = document.createElement("div");
-  btnContainer.id = "cvs-btn-container";
-
-  extToggleBtn = document.createElement("button");
-  extToggleBtn.id = "cvs-toggle-ext";
-  extToggleBtn.title = "Toggle Converse / Twitch chat";
-  extToggleBtn.innerHTML = extToggleSVG;
-  extToggleBtn.addEventListener("click", toggleExtension);
-
-  toggleBtn = document.createElement("button");
-  toggleBtn.id = "cvs-toggle-chat";
-  toggleBtn.title = "Toggle chat visibility";
-  toggleBtn.innerHTML = chatToggleSVG;
-  toggleBtn.addEventListener("click", toggleChat);
-
-  btnContainer.appendChild(extToggleBtn);
-  btnContainer.appendChild(toggleBtn);
-  player.appendChild(btnContainer);
-  updateToggleIcon();
-  updateExtToggleIcon();
 }
 
 // --- IRC message rendering ---
@@ -1001,7 +1087,6 @@ function pollChannel() {
 let lastTheatreMode = null;
 const observer = new MutationObserver(() => {
   injectChat();
-  injectToggleButton();
   pollChannel();
   // Re-apply resize CSS when mode changes (theatre <-> normal)
   if (settings.chatWidth && cvsStyleEl) {
@@ -1016,7 +1101,6 @@ const observer = new MutationObserver(() => {
 function init() {
   connectPort();
   injectChat();
-  injectToggleButton();
   pollChannel();
 
   observer.observe(document.body, { childList: true, subtree: true });

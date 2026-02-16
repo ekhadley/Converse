@@ -373,6 +373,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     })();
     return true;
   }
+  if (msg.type === "open-extensions") {
+    chrome.tabs.create({ url: "chrome://extensions" });
+    return;
+  }
+  if (msg.type === "reload-extension") {
+    chrome.runtime.reload();
+    return;
+  }
   if (msg.type === "account-changed") {
     (async () => {
       currentAccount = await getActiveAccount();
