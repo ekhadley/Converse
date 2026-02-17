@@ -30,6 +30,10 @@ let pauseBar = null;
 let settingsPanel = null;
 let scrollThumb = null;
 let userColors = {}; // username -> color from Twitch IRC tags
+let vodId = null;
+let vodChannel = null;
+let vodPollTimer = null;
+let lastVodOffset = -1;
 
 // --- Channel detection ---
 function getChannel() {
@@ -47,9 +51,15 @@ function getChannel() {
     "subscriptions",
     "drops",
     "search",
+    "videos",
   ];
   if (exclude.includes(name)) return null;
   return name;
+}
+
+function getVodId() {
+  const match = location.pathname.match(/^\/videos\/(\d+)/);
+  return match ? match[1] : null;
 }
 
 // --- Port setup ---
@@ -70,6 +80,16 @@ function connectPort() {
       account = msg.account;
       updateInputPlaceholder();
     }
+    if (msg.type === "vod-channel-data") {
+      badges = msg.badges || {};
+      thirdPartyEmotes = msg.emotes || {};
+      vodChannel = msg.channel;
+      if (msg.settings) applySettings(msg.settings);
+      updateInputPlaceholder();
+    }
+    if (msg.type === "vod-comments") {
+      for (const m of msg.comments) handleIRCMessage(m);
+    }
     if (msg.type === "user-profile") {
       fillUsercardProfile(msg.login, msg.profile);
     }
@@ -81,8 +101,12 @@ function connectPort() {
     setTimeout(connectPort, 1000);
   });
 
-  // Re-announce channel so background rejoins after service worker restart
-  if (currentChannel) {
+  // Re-announce channel/VOD so background rejoins after service worker restart
+  if (vodId) {
+    port.postMessage({ type: "vod-changed", videoId: vodId });
+    const video = document.querySelector("video");
+    if (video) port.postMessage({ type: "vod-seek", videoId: vodId, offset: Math.floor(video.currentTime) });
+  } else if (currentChannel) {
     port.postMessage({ type: "channel-changed", channel: currentChannel });
   }
 }
@@ -155,7 +179,7 @@ chrome.storage.onChanged.addListener((changes) => {
 // --- DOM setup ---
 function buildChatUI(shell) {
   // Hide native Twitch chat children via class (keeps Twitch JS alive)
-  shell.classList.add("cvs-active");
+  shell.classList.add("cvs-active", "cvs-shell");
 
   chatContainer = document.createElement("div");
   chatContainer.id = "cvs-chat";
@@ -360,15 +384,18 @@ function buildChatUI(shell) {
   chatContainer.appendChild(scrollbar);
   chatContainer.appendChild(pauseBar);
   chatContainer.appendChild(inputWrap);
-  chatContainer.appendChild(settingsBtn);
-  chatContainer.appendChild(settingsPanel);
   shell.appendChild(chatContainer);
+  shell.appendChild(settingsBtn);
+  shell.appendChild(settingsPanel);
   shell.appendChild(resizeHandle);
 }
 
 function updateInputPlaceholder() {
   if (!inputEl) return;
-  if (account) {
+  if (vodId) {
+    inputEl.placeholder = "Replay chat";
+    inputEl.disabled = true;
+  } else if (account) {
     inputEl.placeholder = `Chat as ${account.login}`;
     inputEl.disabled = false;
   } else {
@@ -665,7 +692,7 @@ function handleIRCMessage(msg) {
   }
 
   if (msg.command !== "PRIVMSG") return;
-  if (msg.channel !== currentChannel) return;
+  if (msg.channel !== currentChannel && msg.channel !== vodChannel) return;
 
   // Deduplicate history vs live messages
   const msgId = msg.tags?.id;
@@ -690,13 +717,21 @@ function handleIRCMessage(msg) {
   if (settings.showTimestamps) {
     const ts = document.createElement("span");
     ts.className = "cvs-ts";
-    const d = msg.tags?.["tmi-sent-ts"]
-      ? new Date(parseInt(msg.tags["tmi-sent-ts"]))
-      : new Date();
-    ts.textContent =
-      d.getHours().toString().padStart(2, "0") +
-      ":" +
-      d.getMinutes().toString().padStart(2, "0");
+    if (vodId && msg._vodOffset != null) {
+      const secs = msg._vodOffset;
+      const h = Math.floor(secs / 3600);
+      const m = Math.floor((secs % 3600) / 60);
+      const s = secs % 60;
+      ts.textContent = h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+    } else {
+      const d = msg.tags?.["tmi-sent-ts"]
+        ? new Date(parseInt(msg.tags["tmi-sent-ts"]))
+        : new Date();
+      ts.textContent =
+        d.getHours().toString().padStart(2, "0") +
+        ":" +
+        d.getMinutes().toString().padStart(2, "0");
+    }
     line.appendChild(ts);
   }
 
@@ -716,15 +751,16 @@ function handleIRCMessage(msg) {
     }
   }
 
-  // Track user color from IRC tags
-  if (msg.tags?.color) userColors[msg.username] = msg.tags.color;
+  // Track user color from IRC tags (skip unreadable dark colors)
+  const tagColor = msg.tags?.color;
+  if (tagColor && isColorReadable(tagColor)) userColors[msg.username] = tagColor;
 
   // Username
   const userSpan = document.createElement("span");
   userSpan.className = "cvs-user";
   const displayName = msg.tags?.["display-name"] || msg.username;
   userSpan.textContent = displayName;
-  const color = msg.tags?.color || userColors[msg.username] || hashColor(msg.username);
+  const color = (tagColor && isColorReadable(tagColor) ? tagColor : null) || userColors[msg.username] || hashColor(msg.username);
   userSpan.style.color = color;
   line.appendChild(userSpan);
 
@@ -878,6 +914,13 @@ function showTooltip(emoteImg) {
 
 function hideTooltip() {
   if (tooltipEl) tooltipEl.classList.add("cvs-hidden");
+}
+
+function isColorReadable(hex) {
+  if (!hex || hex[0] !== "#") return true;
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 >= 30;
 }
 
 function hashColor(username) {
@@ -1064,8 +1107,59 @@ function injectChat() {
   return true;
 }
 
+// --- VOD time polling ---
+function startVodPoll() {
+  stopVodPoll();
+  lastVodOffset = -1;
+  vodPollTimer = setInterval(() => {
+    const video = document.querySelector("video");
+    if (!video || video.paused) return;
+    const offset = Math.floor(video.currentTime);
+    if (offset === lastVodOffset) return;
+    // Detect seeks (jump > 5s)
+    if (lastVodOffset >= 0 && Math.abs(offset - lastVodOffset) > 5) {
+      if (messageList) messageList.innerHTML = "";
+      messageBuffer = [];
+      msgEven = false;
+      port.postMessage({ type: "vod-seek", videoId: vodId, offset });
+    } else {
+      port.postMessage({ type: "vod-time", videoId: vodId, offset });
+    }
+    lastVodOffset = offset;
+  }, 500);
+}
+
+function stopVodPoll() {
+  if (vodPollTimer) { clearInterval(vodPollTimer); vodPollTimer = null; }
+}
+
 // --- Channel polling + MutationObserver ---
 function pollChannel() {
+  // VOD detection — check before live channel logic
+  const vid = getVodId();
+  if (vid !== vodId) {
+    // Leaving a VOD
+    if (vodId) {
+      stopVodPoll();
+      vodChannel = null;
+      lastVodOffset = -1;
+    }
+    vodId = vid;
+    if (vid) {
+      // Entering a VOD page
+      currentChannel = null;
+      if (messageList) messageList.innerHTML = "";
+      seenMsgIds.clear();
+      messageBuffer = [];
+      closeUsercard();
+      updateInputPlaceholder();
+      if (port) port.postMessage({ type: "vod-changed", videoId: vid });
+      startVodPoll();
+      return;
+    }
+  }
+  if (vodId) return; // Still on same VOD, skip live channel logic
+
   const ch = getChannel();
   if (ch !== currentChannel) {
     currentChannel = ch;

@@ -1,11 +1,11 @@
 /* Converse — chat styles */
 
 /* When Converse is active, hide all native Twitch chat children */
-.cvs-active > :not(#cvs-chat):not(.cvs-resize-handle) {
+.cvs-active > :not(#cvs-chat):not(.cvs-resize-handle):not(.cvs-settings-btn):not(.cvs-settings-panel) {
   display: none !important;
 }
 
-.cvs-active {
+.cvs-shell {
   position: relative;
 }
 
@@ -281,7 +281,7 @@
   transition: opacity 0.15s;
 }
 
-#cvs-chat:hover .cvs-settings-btn {
+.cvs-shell:hover > .cvs-settings-btn {
   opacity: 1;
 }
 

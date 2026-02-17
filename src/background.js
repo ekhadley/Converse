@@ -149,6 +149,136 @@ function broadcast(msg) {
   });
 }
 
+// --- GQL (VOD comments) ---
+const GQL_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+const GQL_HASH = "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a";
+
+async function gqlFetch(body) {
+  const res = await fetch("https://gql.twitch.tv/gql", {
+    method: "POST",
+    headers: { "Client-Id": GQL_CLIENT_ID, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`GQL: ${res.status}`);
+  return res.json();
+}
+
+async function fetchVodInfo(videoId) {
+  const data = await helixFetch(`videos?id=${videoId}`);
+  const video = data.data?.[0];
+  if (!video) return null;
+  return { channel: video.user_login, userId: video.user_id };
+}
+
+async function fetchVodCommentsByOffset(videoId, offsetSeconds) {
+  const data = await gqlFetch({
+    operationName: "VideoCommentsByOffsetOrCursor",
+    variables: { videoID: videoId, contentOffsetSeconds: offsetSeconds },
+    extensions: { persistedQuery: { version: 1, sha256Hash: GQL_HASH } },
+  });
+  const comments = data?.data?.video?.comments;
+  return {
+    edges: comments?.edges || [],
+    hasNext: comments?.pageInfo?.hasNextPage || false,
+    cursor: comments?.edges?.at(-1)?.cursor || null,
+  };
+}
+
+async function fetchVodCommentsByCursor(videoId, cursor) {
+  const data = await gqlFetch({
+    operationName: "VideoCommentsByOffsetOrCursor",
+    variables: { videoID: videoId, cursor },
+    extensions: { persistedQuery: { version: 1, sha256Hash: GQL_HASH } },
+  });
+  const comments = data?.data?.video?.comments;
+  return {
+    edges: comments?.edges || [],
+    hasNext: comments?.pageInfo?.hasNextPage || false,
+    cursor: comments?.edges?.at(-1)?.cursor || null,
+  };
+}
+
+function vodCommentToIRC(edge, channel) {
+  const node = edge.node;
+  const commenter = node.commenter;
+  if (!commenter) return null; // deleted user
+
+  const fragments = node.message?.fragments || [];
+  const trailing = fragments.map((f) => f.text).join("");
+
+  // Build emotes tag from fragments that have emote data
+  let emoteTag = "";
+  const emoteParts = [];
+  let charIdx = 0;
+  for (const frag of fragments) {
+    if (frag.emote) {
+      const start = charIdx;
+      const end = charIdx + frag.text.length - 1;
+      emoteParts.push(`${frag.emote.emoteID}:${start}-${end}`);
+    }
+    charIdx += frag.text.length;
+  }
+  if (emoteParts.length) emoteTag = emoteParts.join("/");
+
+  // Build badges tag
+  const userBadges = node.message?.userBadges || [];
+  const badgeStr = userBadges.map((b) => `${b.setID}/${b.version}`).join(",");
+
+  return {
+    command: "PRIVMSG",
+    channel,
+    username: commenter.login,
+    trailing,
+    _vodOffset: node.contentOffsetSeconds,
+    tags: {
+      "display-name": commenter.displayName,
+      color: node.message?.userColor || "",
+      id: node.id,
+      badges: badgeStr,
+      emotes: emoteTag || undefined,
+    },
+  };
+}
+
+async function drainVodComments(port, offset) {
+  const vod = port._vod;
+  if (!vod?.channel) return;
+
+  // Fetch more if buffer doesn't cover this offset
+  while (vod.endOffset < offset) {
+    if (vod.fetching) return; // another fetch in progress, it'll drain when done
+    vod.fetching = true;
+    try {
+      const result = vod.cursor
+        ? await fetchVodCommentsByCursor(vod.videoId, vod.cursor)
+        : await fetchVodCommentsByOffset(vod.videoId, offset);
+      for (const edge of result.edges) {
+        const irc = vodCommentToIRC(edge, vod.channel);
+        if (irc) vod.comments.push(irc);
+      }
+      vod.cursor = result.cursor;
+      if (result.edges.length) {
+        vod.endOffset = result.edges.at(-1).node.contentOffsetSeconds;
+      }
+      if (!result.hasNext) { vod.endOffset = Infinity; break; }
+    } catch (e) {
+      console.error("VOD comment fetch error:", e);
+      break;
+    } finally {
+      vod.fetching = false;
+    }
+  }
+
+  // Drain comments up to current offset
+  const ready = [];
+  while (vod.comments.length && vod.comments[0]._vodOffset <= offset) {
+    ready.push(vod.comments.shift());
+  }
+  if (ready.length) {
+    port.postMessage({ type: "vod-comments", comments: ready });
+  }
+}
+
 // --- Recent messages (robotty) ---
 async function fetchRecentMessages(channel) {
   const res = await fetch(
@@ -277,6 +407,50 @@ chrome.runtime.onConnect.addListener((port) => {
       } catch (e) {
         console.error("Failed to fetch channel data:", e);
       }
+    }
+
+    if (msg.type === "vod-changed") {
+      const { videoId } = msg;
+      port._channel = null; // not a live channel
+      port._vod = { videoId, comments: [], cursor: null, endOffset: -1, fetching: false };
+      (async () => {
+        const settings = await getSettings();
+        const info = await fetchVodInfo(videoId);
+        if (!info) return;
+        port._vod.channel = info.channel;
+        port._vod.userId = info.userId;
+        const [vodBadges, vodEmotes] = await Promise.all([
+          currentAccount ? fetchBadges(helixFetch, info.userId).catch(() => ({})) : {},
+          fetchAllEmotes(info.userId).catch(() => ({})),
+        ]);
+        port.postMessage({
+          type: "vod-channel-data",
+          channel: info.channel,
+          badges: vodBadges,
+          emotes: vodEmotes,
+          settings,
+        });
+        port.postMessage({
+          type: "account-info",
+          account: currentAccount ? { login: currentAccount.login, userId: currentAccount.userId } : null,
+        });
+      })().catch((e) => console.error("vod-changed error:", e));
+    }
+
+    if (msg.type === "vod-seek") {
+      const vod = port._vod;
+      if (!vod || msg.videoId !== vod.videoId) return;
+      // Reset buffer and fetch from new offset
+      vod.comments = [];
+      vod.cursor = null;
+      vod.endOffset = -1;
+      drainVodComments(port, msg.offset);
+    }
+
+    if (msg.type === "vod-time") {
+      const vod = port._vod;
+      if (!vod || msg.videoId !== vod.videoId) return;
+      drainVodComments(port, msg.offset);
     }
 
     if (msg.type === "send-message") {

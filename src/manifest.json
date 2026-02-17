@@ -9,7 +9,8 @@
     "https://id.twitch.tv/*",
     "https://7tv.io/*",
     "https://api.betterttv.net/*",
-    "https://api.frankerfacez.com/*"
+    "https://api.frankerfacez.com/*",
+    "https://gql.twitch.tv/*"
   ],
   "background": {
     "service_worker": "background.js",

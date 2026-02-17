@@ -5,8 +5,8 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 
 ## File Structure
 - `src/manifest.json` — Extension manifest (v3). Background is a module service worker.
-- `src/background.js` — Service worker. IRC WebSocket, port management, Helix API calls, emote/badge fetching.
-- `src/content.js` — Content script injected on `twitch.tv/*`. Builds chat UI, renders messages, handles resize/scroll/tooltips/usercards.
+- `src/background.js` — Service worker. IRC WebSocket, port management, Helix API calls, emote/badge fetching, VOD comment fetching via GQL.
+- `src/content.js` — Content script injected on `twitch.tv/*`. Builds chat UI, renders messages, handles resize/scroll/tooltips/usercards, VOD detection and time-synced playback.
 - `src/chat.css` — All chat styling.
 - `src/popup.html` / `src/popup.js` — Extension popup for account management and settings.
 - `src/lib/auth.js` — OAuth helpers, account CRUD in `chrome.storage.local`.
@@ -18,8 +18,8 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 
 ### Communication
 Content script connects a long-lived port (`name: "chat"`) to the background service worker. On port disconnect (e.g. service worker restart), the content script reconnects and re-sends `channel-changed` to restore state. `broadcast()` in background auto-prunes dead ports. Messages:
-- **content -> background (port):** `channel-changed`, `send-message`, `get-user-profile`
-- **background -> content (port):** `irc-message`, `recent-messages`, `channel-data` (badges + emotes + settings), `account-info`, `user-profile`
+- **content -> background (port):** `channel-changed`, `send-message`, `get-user-profile`, `vod-changed`, `vod-time`, `vod-seek`
+- **background -> content (port):** `irc-message`, `recent-messages`, `channel-data` (badges + emotes + settings), `account-info`, `user-profile`, `vod-channel-data`, `vod-comments`
 - **content -> background (runtime message):** `open-extensions`, `reload-extension`
 
 Settings changes propagate via `chrome.storage.onChanged` listener in content script. Content script cannot call `chrome.tabs.create()` or `chrome.runtime.reload()` directly — these are proxied through runtime messages to the background script.
@@ -28,7 +28,10 @@ Settings changes propagate via `chrome.storage.onChanged` listener in content sc
 Single WebSocket to `wss://irc-ws.chat.twitch.tv:443`. Requests `twitch.tv/tags` and `twitch.tv/commands` capabilities. Authenticates as the active account or anonymous (`justinfan`). Reconnects with exponential backoff (1s to 30s). Joins/parts channels based on which content script ports are active — only parts when no port is watching a channel. Client-side PING sent every 60s; if no PONG received before the next ping, the connection is assumed dead and force-closed. Handles Twitch `RECONNECT` command by closing the socket to trigger reconnect.
 
 ### Channel Detection
-`getChannel()` parses `location.pathname` for a channel name, excluding known non-channel paths (directory, settings, payments, etc.). Polled every 1.5s + on MutationObserver fires. On channel change: clears messages, clears `seenMsgIds`, resets `messageBuffer`, closes usercard. When navigating away from a channel (channel becomes null), resize CSS overrides are cleared so Twitch can manage the player (mini-player, PiP, etc.).
+`getChannel()` parses `location.pathname` for a channel name, excluding known non-channel paths (directory, settings, payments, videos, etc.). Polled every 1.5s + on MutationObserver fires. On channel change: clears messages, clears `seenMsgIds`, resets `messageBuffer`, closes usercard. When navigating away from a channel (channel becomes null), resize CSS overrides are cleared so Twitch can manage the player (mini-player, PiP, etc.).
+
+### VOD Detection
+`getVodId()` parses `/videos/(\d+)` from pathname. `pollChannel()` checks for VOD pages before live channel logic. On VOD entry: sends `vod-changed` to background, starts 500ms time polling via `startVodPoll()`. On VOD exit: stops polling, clears VOD state. While on a VOD, live channel logic is skipped entirely.
 
 ### Recent Messages
 On channel join, fetches backfill from `recent-messages.robotty.de`. Deduplication via `seenMsgIds` Set (keyed on `msg.tags.id`) prevents overlap with live messages.
@@ -67,6 +70,17 @@ Uses `msg.tags.color` if present, falls back to `userColors` map (populated from
 
 ### @Mention Highlighting
 Words starting with `@` followed by a valid username pattern are rendered as `.cvs-mention` spans — bold, colored (using the mentioned user's color from `userColors` or hash fallback), and clickable (opens usercard). Messages that mention the logged-in user get a `.cvs-line-mention` class: purple-tinted background with a left border accent.
+
+### VOD Chat Replay
+On VOD pages (`/videos/{id}`), historical chat comments are fetched from Twitch's GQL API (`VideoCommentsByOffsetOrCursor` via `gql.twitch.tv/gql`) and delivered time-synced to video playback. Uses Twitch's first-party Client-ID (`kimne78kx3ncx6brgo4mv6wki5h1ko`) — the extension's own Client-ID returns 400 for GQL.
+
+**Flow:** Content script polls `video.currentTime` every 500ms, sends `vod-time` to background. Background maintains a cursor-paginated comment buffer, drains comments with `contentOffsetSeconds <= offset`, transforms them to IRC format via `vodCommentToIRC()`, and sends as `vod-comments`. Content script feeds each through `handleIRCMessage()` for normal rendering.
+
+**Seek handling:** If `video.currentTime` jumps >5s, content script clears messages and sends `vod-seek`. Background resets the comment buffer/cursor and re-fetches from the new offset.
+
+**Timestamps:** VOD messages display elapsed video time (e.g. `1:23:45`) instead of wall-clock time, using `_vodOffset` from the GQL response.
+
+**Input:** Disabled with "Replay chat" placeholder on VOD pages. Badges and emotes are fetched for the VOD's channel (resolved via Helix `videos?id=`).
 
 ### Account Management
 OAuth flow via `chrome.identity.launchWebAuthFlow` with scopes `chat:read chat:edit`. Multiple accounts stored in `chrome.storage.local`, one active at a time. Switch/remove from popup. Changing account closes IRC and reconnects.
@@ -207,12 +221,19 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ---
 
 ## TODO
-- [x] Losing hover focus making buttons disappear near the right edge of the stream view when in theatre mode
-- [x] 'Chat Paused' bar is sitting on top  of the input box
-- [x] When page gets horizontally rescaled, make chat %width be constant, not absolute width
+
+### Bugs
+- [ ] Sometimes animated emotes appear frozen. One message may have the emote be frozen, the next will have them working. It isn't a chat-wide or emote-wide issue.
+- [ ] When hovering an emote, sometimes an old emote tooltip will be shown, with the correct emote name but some other emote as the display image/gif (possibly just for first time hovering a new emote, not sure).
+- [ ] Chat sometimes clears all messages and fails to resume
+
+### Small Tweaks
+- [x] Remove black as a possible name color
+- [x] The converse settings menu should remain and keep its behavior even when normal twitch chat mode is toggled on.
+
+### Features
 - [ ] Emote autocomplete — type `:` or start a word in input, dropdown of matching emotes from loaded set, tab to complete
 - [ ] Username autocomplete — tab-complete usernames from `messageBuffer` for @mentions
-- [x] Username highlighting — when @user_name shows up in chat, style it and make it clickable to show the usercard
 - [ ] Reply threading — render reply-parent IRC tags with visual indicator (quoted parent text or reply line) instead of flat
 - [ ] Reply thread view. Clicking a reply thread message shows a popup chat or similar to scroll through.
 - [ ] Input history (up arrow) — press up in input to cycle through previously sent messages
@@ -221,10 +242,8 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [ ] Channel points counter — display current channel points balance
 - [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
 - [ ] Channel point redeems. Currently only show up as normal messages.
-- [ ] VOD support — make the extension work on VOD pages
-- [x] Chat input restyle — rounded box, static at bottom of chat column (not floating/overlay)
-- [x] Very wide emotes are getting squished when hovered in the tooltip because of the fixed size of the popup.
-- [x] Username colors — local echo messages should use the user's actual Twitch color (from their settings) instead of the hash-based fallback
+- [x] VOD support — make the extension work on VOD pages
+- [ ] Zero width overlapping emotes — support zero-width emotes (e.g. 7TV) that overlay on top of the preceding emote
 
 ## Icons
 All icons are inline SVGs using Font Awesome 6 Free Solid paths (no FA CSS/fonts bundled). In-chat settings: `fa-gear`. Popup header: `fa-wrench` (opens `chrome://extensions`), `fa-rotate-right` (reload extension). Both sets of action buttons are also in the in-chat settings panel footer.
