@@ -78,6 +78,8 @@ On VOD pages (`/videos/{id}`), historical chat comments are fetched from Twitch'
 
 **Seek handling:** If `video.currentTime` jumps >5s, content script clears messages and sends `vod-seek`. Background resets the comment buffer/cursor and re-fetches from the new offset.
 
+**Chat gaps:** The GQL API returns `hasNext: false` when there are no more comment pages at the current cursor position — but this does NOT mean the VOD has no more comments ever. Chat may resume later. When `hasNext` is false, `endOffset` advances to the current playback position (not Infinity) and cursor resets, so fetching resumes as the video progresses past the gap (~1 GQL request/sec during silence).
+
 **Timestamps:** VOD messages display elapsed video time (e.g. `1:23:45`) instead of wall-clock time, using `_vodOffset` from the GQL response.
 
 **Input:** Disabled with "Replay chat" placeholder on VOD pages. Badges and emotes are fetched for the VOD's channel (resolved via Helix `videos?id=`).
@@ -225,7 +227,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ### Bugs
 - [ ] Sometimes animated emotes appear frozen. One message may have the emote be frozen, the next will have them working. It isn't a chat-wide or emote-wide issue.
 - [ ] When hovering an emote, sometimes an old emote tooltip will be shown, with the correct emote name but some other emote as the display image/gif (possibly just for first time hovering a new emote, not sure).
-- [ ] Chat sometimes clears all messages and fails to resume
+- [x] Chat sometimes clears all messages and fails to resume — root cause: GQL `hasNext: false` during chat gaps set `endOffset = Infinity`, permanently disabling fetching. Fixed by advancing `endOffset` to current offset instead, so fetching resumes as video progresses.
 
 ### Small Tweaks
 - [x] Remove black as a possible name color

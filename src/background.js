@@ -260,7 +260,13 @@ async function drainVodComments(port, offset) {
       if (result.edges.length) {
         vod.endOffset = result.edges.at(-1).node.contentOffsetSeconds;
       }
-      if (!result.hasNext) { vod.endOffset = Infinity; break; }
+      if (!result.hasNext) {
+        // Don't set Infinity — VOD may have comments later after a gap.
+        // Advance to current offset so we re-check as video progresses.
+        vod.endOffset = Math.max(vod.endOffset, offset);
+        vod.cursor = null;
+        break;
+      }
     } catch (e) {
       console.error("VOD comment fetch error:", e);
       break;
