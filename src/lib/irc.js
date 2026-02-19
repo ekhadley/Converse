@@ -47,10 +47,13 @@ export function parseIRCMessage(raw) {
     paramStart++;
   }
 
-  // Find trailing (starts with :)
+  // Find trailing (starts with :), or fall back to remaining params for single-word messages
+  // (recent-messages API omits the : prefix on single-word trailing text per IRC spec)
   const trailingIdx = rest.indexOf(" :", command.length);
   if (trailingIdx !== -1) {
     trailing = rest.substring(trailingIdx + 2);
+  } else if (parts.length > paramStart) {
+    trailing = parts.slice(paramStart).join(" ");
   }
 
   // Extract username from prefix (nick!user@host)

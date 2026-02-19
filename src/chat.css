@@ -111,6 +111,30 @@
   color: #898395;
 }
 
+/* --- System / event lines --- */
+
+.cvs-line-system {
+  color: #898395;
+  font-size: 0.9em;
+}
+
+.cvs-gift-toggle {
+  margin-left: 6px;
+  cursor: pointer;
+  user-select: none;
+  color: #898395;
+}
+
+.cvs-gift-toggle:hover {
+  color: #efeff1;
+}
+
+.cvs-gift-names {
+  padding-left: 12px;
+  color: #716f83;
+  font-size: 0.95em;
+}
+
 /* --- Mentions --- */
 
 .cvs-mention {

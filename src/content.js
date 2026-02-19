@@ -17,6 +17,7 @@ let settings = {
 };
 let account = null; // { login, userId } or null
 let autoScroll = true;
+let resizing = false;
 let seenMsgIds = new Set();
 let messageBuffer = [];
 let usercardEl = null;
@@ -30,6 +31,7 @@ let pauseBar = null;
 let settingsPanel = null;
 let scrollThumb = null;
 let userColors = {}; // username -> color from Twitch IRC tags
+let pendingMysteryGifts = {}; // username -> { remaining, namesEl }
 let vodId = null;
 let vodChannel = null;
 let vodPollTimer = null;
@@ -406,6 +408,7 @@ function updateInputPlaceholder() {
 
 // --- Scroll ---
 function onScroll() {
+  if (resizing) return;
   const el = messageList;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
   if (atBottom && !autoScroll) resumeScroll();
@@ -594,6 +597,7 @@ function startResize(e) {
       chrome.storage.local.set({ settings: { ...s, hideChat: false } });
     });
   }
+  resizing = true;
   const startX = e.clientX;
   const startWidth = chatContainer.getBoundingClientRect().width;
   let lastWidth = startWidth;
@@ -608,7 +612,9 @@ function startResize(e) {
   function onUp() {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
+    resizing = false;
     setChatWidth(lastWidth);
+    scrollIfNeeded();
     const ratio = lastWidth / window.innerWidth;
     chrome.storage.local.get("settings", ({ settings: s }) => {
       chrome.storage.local.set({
@@ -664,6 +670,29 @@ function collapsedCSS() {
 }
 
 // --- IRC message rendering ---
+function formatSubTier(plan) {
+  if (plan === "2000") return "Tier 2";
+  if (plan === "3000") return "Tier 3";
+  return "Tier 1";
+}
+
+function makeSystemTimestamp(msg) {
+  if (!settings.showTimestamps) return null;
+  const ts = document.createElement("span");
+  ts.className = "cvs-ts";
+  if (vodId && msg._vodOffset != null) {
+    const secs = msg._vodOffset;
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    ts.textContent = h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  } else {
+    const d = msg.tags?.["tmi-sent-ts"] ? new Date(parseInt(msg.tags["tmi-sent-ts"])) : new Date();
+    ts.textContent = d.getHours().toString().padStart(2, "0") + ":" + d.getMinutes().toString().padStart(2, "0");
+  }
+  return ts;
+}
+
 function handleIRCMessage(msg) {
   if (!messageList) return;
 
@@ -689,6 +718,76 @@ function handleIRCMessage(msg) {
     }
     updateScrollbar();
     return;
+  }
+
+  // --- Gift sub events ---
+  if (msg.command === "USERNOTICE") {
+    if (msg.channel !== currentChannel && msg.channel !== vodChannel) return;
+    const noticeId = msg.tags?.["msg-id"];
+    const gifter = msg.username === "ananonymousgifter" ? "Anonymous" : (msg.tags?.["display-name"] || msg.username);
+    const tier = formatSubTier(msg.tags?.["msg-param-sub-plan"]);
+
+    if (noticeId === "submysterygift") {
+      const count = parseInt(msg.tags?.["msg-param-mass-gift-count"]) || 0;
+      const line = document.createElement("div");
+      line.className = "cvs-line cvs-line-system" + (msgEven ? " cvs-line-even" : "");
+      msgEven = !msgEven;
+      const ts = makeSystemTimestamp(msg);
+      if (ts) line.appendChild(ts);
+      const text = document.createElement("span");
+      text.textContent = `${gifter} is gifting ${count} ${tier} sub${count !== 1 ? "s" : ""}!`;
+      line.appendChild(text);
+      const toggle = document.createElement("span");
+      toggle.className = "cvs-gift-toggle";
+      toggle.textContent = "\u25B8";
+      line.appendChild(toggle);
+      const names = document.createElement("div");
+      names.className = "cvs-gift-names cvs-hidden";
+      line.appendChild(names);
+      toggle.addEventListener("click", () => {
+        names.classList.toggle("cvs-hidden");
+        toggle.textContent = names.classList.contains("cvs-hidden") ? "\u25B8" : "\u25BE";
+        updateScrollbar();
+        scrollIfNeeded();
+      });
+      pendingMysteryGifts[msg.username] = { remaining: count, namesEl: names };
+      messageList.appendChild(line);
+      pruneMessages();
+      scrollIfNeeded();
+      updateScrollbar();
+      return;
+    }
+
+    if (noticeId === "subgift" || noticeId === "anonsubgift") {
+      const recipient = msg.tags?.["msg-param-recipient-display-name"] || msg.tags?.["msg-param-recipient-user-name"] || "someone";
+      // Collect into mystery gift dropdown if part of a bulk gift
+      const pending = pendingMysteryGifts[msg.username];
+      if (pending && pending.remaining > 0) {
+        const nameEl = document.createElement("div");
+        nameEl.textContent = recipient;
+        pending.namesEl.appendChild(nameEl);
+        pending.remaining--;
+        if (pending.remaining <= 0) delete pendingMysteryGifts[msg.username];
+        if (autoScroll) scrollIfNeeded();
+        return;
+      }
+      // Standalone gift sub
+      const line = document.createElement("div");
+      line.className = "cvs-line cvs-line-system" + (msgEven ? " cvs-line-even" : "");
+      msgEven = !msgEven;
+      const ts = makeSystemTimestamp(msg);
+      if (ts) line.appendChild(ts);
+      const text = document.createElement("span");
+      text.textContent = `${gifter} gifted a ${tier} sub to ${recipient}`;
+      line.appendChild(text);
+      messageList.appendChild(line);
+      pruneMessages();
+      scrollIfNeeded();
+      updateScrollbar();
+      return;
+    }
+
+    return; // Ignore other USERNOTICE types for now
   }
 
   if (msg.command !== "PRIVMSG") return;
@@ -1120,6 +1219,7 @@ function startVodPoll() {
     if (lastVodOffset >= 0 && Math.abs(offset - lastVodOffset) > 5) {
       if (messageList) messageList.innerHTML = "";
       messageBuffer = [];
+      pendingMysteryGifts = {};
       msgEven = false;
       port.postMessage({ type: "vod-seek", videoId: vodId, offset });
     } else {
@@ -1151,6 +1251,7 @@ function pollChannel() {
       if (messageList) messageList.innerHTML = "";
       seenMsgIds.clear();
       messageBuffer = [];
+      pendingMysteryGifts = {};
       closeUsercard();
       updateInputPlaceholder();
       if (port) port.postMessage({ type: "vod-changed", videoId: vid });
@@ -1173,6 +1274,7 @@ function pollChannel() {
     if (messageList) messageList.innerHTML = "";
     seenMsgIds.clear();
     messageBuffer = [];
+    pendingMysteryGifts = {};
     closeUsercard();
   }
 }
@@ -1187,7 +1289,10 @@ const observer = new MutationObserver(() => {
     const theatre = isTheatreMode();
     if (theatre !== lastTheatreMode) {
       lastTheatreMode = theatre;
+      resizing = true;
       setChatWidth(getChatWidthPx());
+      resizing = false;
+      scrollIfNeeded();
     }
   }
 });
@@ -1202,7 +1307,10 @@ function init() {
   // Recalculate chat width on window resize to maintain proportional width
   window.addEventListener("resize", () => {
     if (!settings.chatWidth || !cvsStyleEl || chatCollapsed || !extensionEnabled) return;
+    resizing = true;
     setChatWidth(getChatWidthPx());
+    resizing = false;
+    scrollIfNeeded();
   });
 
   // Also poll periodically as a fallback for SPA navigations
