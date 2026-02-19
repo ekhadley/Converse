@@ -68,6 +68,9 @@ Messages alternate odd/even backgrounds via `cvs-line-even` class. Colors set vi
 ### Username Colors
 Uses `msg.tags.color` if present, falls back to `userColors` map (populated from previous messages by that user), then generates a deterministic HSL color from a hash of the username. The `userColors` map persists across channel switches since Twitch colors are global. This ensures local echo messages and @mentions use the user's real Twitch color.
 
+### Gift Sub Alerts
+`USERNOTICE` messages with `msg-id` of `subgift`, `submysterygift`, or `anonsubgift` render as grayed-out system lines (`.cvs-line-system`). Mystery gifts ("X is gifting N Tier 1 subs!") include a collapsible dropdown (▸/▾ toggle) that accumulates recipient names from the subsequent individual `subgift` messages via `pendingMysteryGifts` map (keyed by gifter username, tracks remaining count and the names DOM element). Standalone gift subs render as "X gifted a Tier 1 sub to Y". Anonymous gifters (`ananonymousgifter`) display as "Anonymous". `pendingMysteryGifts` is cleared on channel switch, VOD change, and VOD seek.
+
 ### @Mention Highlighting
 Words starting with `@` followed by a valid username pattern are rendered as `.cvs-mention` spans — bold, colored (using the mentioned user's color from `userColors` or hash fallback), and clickable (opens usercard). Messages that mention the logged-in user get a `.cvs-line-mention` class: purple-tinted background with a left border accent.
 
@@ -239,7 +242,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [ ] Reply threading — render reply-parent IRC tags with visual indicator (quoted parent text or reply line) instead of flat
 - [ ] Reply thread view. Clicking a reply thread message shows a popup chat or similar to scroll through.
 - [ ] Input history (up arrow) — press up in input to cycle through previously sent messages
-- [ ] Gift sub alerts — display gift sub events in chat
+- [x] Gift sub alerts — display gift sub events in chat (mystery gifts collapsible)
 - [ ] First message highlights — visually highlight a user's first message in the channel
 - [ ] Channel points counter — display current channel points balance
 - [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
