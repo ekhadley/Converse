@@ -1,5 +1,7 @@
 // Parse a single TMI IRC message into a structured object.
 // Format: @tags :prefix COMMAND #channel :message
+const TAG_UNESCAPE = { s: " ", n: "\n", r: "\r", "\\": "\\", ":": ";" };
+
 export function parseIRCMessage(raw) {
   let idx = 0;
   let tags = {};
@@ -13,12 +15,7 @@ export function parseIRCMessage(raw) {
       if (eq === -1) {
         tags[pair] = true;
       } else {
-        tags[pair.substring(0, eq)] = pair
-          .substring(eq + 1)
-          .replace(/\\s/g, " ")
-          .replace(/\\n/g, "\n")
-          .replace(/\\r/g, "\r")
-          .replace(/\\\\/g, "\\");
+        tags[pair.substring(0, eq)] = pair.substring(eq + 1).replace(/\\([snr\\:])/g, (_, c) => TAG_UNESCAPE[c] ?? c);
       }
     }
     idx = spaceIdx + 1;

@@ -29,6 +29,7 @@ async function fetch7TVGlobal() {
         url: `https:${host.url}/1x.webp`,
         provider: "7tv",
         scope: "global",
+        ...(e.flags & 1 && { zeroWidth: true }),
       };
     }
   }
@@ -51,6 +52,7 @@ async function fetch7TVChannel(userId) {
         url: `https:${host.url}/1x.webp`,
         provider: "7tv",
         scope: "channel",
+        ...(e.flags & 1 && { zeroWidth: true }),
       };
     }
   }
@@ -147,13 +149,14 @@ async function fetchFFZChannel(userId) {
 // --- Unified fetch ---
 // Priority: 7TV > BTTV > FFZ (later spreads win on collision)
 export async function fetchAllEmotes(userId) {
+  const safe = (p) => p.catch(() => ({}));
   const [s7g, s7c, btg, btc, fzg, fzc] = await Promise.all([
-    fetch7TVGlobal(),
-    fetch7TVChannel(userId),
-    fetchBTTVGlobal(),
-    fetchBTTVChannel(userId),
-    fetchFFZGlobal(),
-    fetchFFZChannel(userId),
+    safe(fetch7TVGlobal()),
+    safe(fetch7TVChannel(userId)),
+    safe(fetchBTTVGlobal()),
+    safe(fetchBTTVChannel(userId)),
+    safe(fetchFFZGlobal()),
+    safe(fetchFFZChannel(userId)),
   ]);
   // FFZ < BTTV < 7TV — last spread wins, so 7TV goes last
   return { ...fzg, ...fzc, ...btg, ...btc, ...s7g, ...s7c };

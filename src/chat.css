@@ -135,6 +135,27 @@
   font-size: 0.95em;
 }
 
+.cvs-line-sub {
+  border-left: 2px solid #d4a827;
+  background: rgba(212, 168, 39, 0.08) !important;
+}
+
+.cvs-line-raid {
+  border-left: 2px solid #4a90d9;
+  background: rgba(74, 144, 217, 0.08) !important;
+}
+
+.cvs-line-redeem {
+  border-left: 2px solid #9147ff;
+  background: rgba(145, 71, 255, 0.08) !important;
+}
+
+.cvs-system-body {
+  display: block;
+  color: #efeff1;
+  padding-top: 2px;
+}
+
 /* --- Mentions --- */
 
 .cvs-mention {
@@ -160,6 +181,22 @@
   width: auto;
   vertical-align: middle;
   margin: -4px 1px;
+}
+.cvs-emote-stack {
+  display: inline-block;
+  position: relative;
+  vertical-align: middle;
+  margin: -4px 1px;
+}
+.cvs-emote-stack > .cvs-emote:first-child {
+  margin: 0;
+}
+.cvs-emote-stack > .cvs-emote-overlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
 }
 
 /* --- Pause bar (overlay, does not reserve space) --- */
@@ -199,13 +236,29 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 10px;
   padding: 4px 8px;
+  position: relative;
+}
+
+.cvs-input-overlay {
+  position: absolute;
+  top: 4px; left: 8px; right: 8px; bottom: 4px;
+  padding: 6px 6px;
+  color: #efeff1;
+  font-size: inherit;
+  font-family: inherit;
+  white-space: pre;
+  overflow: hidden;
+  pointer-events: none;
+  line-height: normal;
 }
 
 .cvs-input {
+  position: relative;
   width: 100%;
   box-sizing: border-box;
   background: transparent;
-  color: #efeff1;
+  color: transparent;
+  caret-color: #efeff1;
   border: none;
   padding: 6px 6px;
   font-size: inherit;
@@ -216,10 +269,11 @@
 .cvs-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  color: transparent;
 }
 
 .cvs-input::placeholder {
-  color: #898395;
+  color: #898395 !important;
 }
 
 /* --- Resize handle --- */
@@ -598,4 +652,55 @@
 .cvs-usercard-close:hover {
   color: #efeff1;
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* --- Autocomplete dropdown --- */
+
+.cvs-autocomplete {
+  position: absolute;
+  bottom: 52px;
+  left: 8px;
+  right: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: rgba(15, 15, 20, 0.95);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  z-index: 6;
+  scrollbar-width: none;
+}
+.cvs-autocomplete::-webkit-scrollbar { display: none; }
+
+.cvs-ac-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.cvs-ac-item:hover,
+.cvs-ac-item.cvs-ac-active {
+  background: rgba(120, 68, 232, 0.25);
+}
+
+.cvs-ac-emote-img {
+  height: 24px;
+  width: auto;
+  flex-shrink: 0;
+}
+
+.cvs-ac-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cvs-ac-label {
+  font-size: 11px;
+  color: #898395;
+  flex-shrink: 0;
 }

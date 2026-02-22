@@ -1,17 +1,7 @@
 // Converse — popup script
 // Manages accounts and settings.
 
-const DEFAULT_SETTINGS = {
-  fontSize: 13,
-  messageSpacing: 2,
-  showTimestamps: true,
-  showBadges: true,
-  emoteProviders: { twitch: true, "7tv": true, bttv: true, ffz: true },
-  messageCap: 500,
-  chatWidth: null,
-  bgOdd: "#0e0e10",
-  bgEven: "#111114",
-};
+import { DEFAULT_SETTINGS } from "./lib/settings.js";
 
 // --- Accounts ---
 const accountList = document.getElementById("account-list");

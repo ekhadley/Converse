@@ -12,7 +12,8 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 - `src/lib/auth.js` — OAuth helpers, account CRUD in `chrome.storage.local`.
 - `src/lib/irc.js` — TMI IRC message parser (tags, prefix, command, channel, trailing, username).
 - `src/lib/badges.js` — Fetches global + channel badges from Helix API. Global cached in memory. Channel overrides global. Returns map of `"set_id/version" -> url`.
-- `src/lib/emotes.js` — Fetches 7TV, BTTV, FFZ emotes (global + channel). Cached in `chrome.storage.local` with TTLs (6h global, 1h channel). Priority on name collision: 7TV > BTTV > FFZ.
+- `src/lib/emotes.js` — Fetches 7TV, BTTV, FFZ emotes (global + channel). Cached in `chrome.storage.local` with TTLs (6h global, 1h channel). Priority on name collision: 7TV > BTTV > FFZ. Each provider fetch is wrapped in `safe()` so one failure doesn't break all emotes.
+- `src/lib/settings.js` — Shared `DEFAULT_SETTINGS` object imported by background.js and popup.js.
 
 ## Architecture
 
@@ -39,7 +40,7 @@ On channel join, fetches backfill from `recent-messages.robotty.de`. Deduplicati
 ## Features
 
 ### Emote Rendering
-Twitch emotes parsed from IRC `emotes` tag (position-based). Third-party emotes matched by word against the `thirdPartyEmotes` map (populated from background on channel join). Each provider individually toggleable in settings.
+Twitch emotes parsed from IRC `emotes` tag (position-based). Third-party emotes matched by word against the `thirdPartyEmotes` map (populated from background on channel join). Each provider individually toggleable in settings. Zero-width emotes (7TV `flags & 1`) are stacked onto the preceding emote via `.cvs-emote-stack` wrappers with absolute positioning. Messages are rendered via RAF-batched `queueLine()` / `flushMessages()` for performance.
 
 ### Emote Tooltip
 Hover an emote to see a 3x preview, name, provider label (7TV/BetterTTV/FrankerFaceZ/Twitch), and scope (Native/Channel/Global). Positioned above the emote, flips below if clipped at top, clamped horizontally.
@@ -57,6 +58,20 @@ Chat auto-scrolls to bottom. When user scrolls up (>30px from bottom), `autoScro
 
 ### Chat Input
 Static input at the bottom of the chat column. Styled as a rounded box with a subtle border, always visible. Sends `PRIVMSG` via background port on Enter, then creates a local echo (synthetic IRC message rendered via `handleIRCMessage`) since Twitch IRC doesn't echo back your own PRIVMSGs. Shows "Chat as {username}" when logged in, "Log in to chat" (disabled) when anonymous.
+
+**Input overlay:** The input uses a transparent-text overlay technique for rich rendering. The actual `<input>` has `color: transparent` with `caret-color: #efeff1` so the caret is visible. A `.cvs-input-overlay` div sits behind it (same font/padding) and renders the text with colored `@mention` spans. `updateInputOverlay()` parses `@username` tokens and colors them if the user is known (in `userColors` or is the channel owner). Scroll position is synced via `syncOverlayScroll()`.
+
+### Autocomplete
+A single `div.cvs-autocomplete` dropdown positioned above the input, shared by emote and username completion.
+
+**Emote autocomplete:** Triggered by typing `:` + 1 char, or any 2+ char word not starting with `@`. Case-insensitive substring match against `thirdPartyEmotes` (filtered by enabled providers). Prefix matches sort first, then shorter names. Shows emote image + name + provider label. Capped at 15 results.
+
+**Username autocomplete:** Triggered by `@` + 1 char. Prefix match against `messageBuffer` (recent chatters first, deduplicated). Channel owner always included as a candidate with broadcaster badge. Shows user badges + display name colored with their chat color. Capped at 10 results.
+
+**Interaction:** Tab or Enter accepts (selects first if none highlighted). Up/Down navigates items. Escape closes. Click on a row accepts. Blur closes with 150ms delay so click events register. On accept, the token in the input is replaced with the completed value + trailing space.
+
+### Input History
+Sent messages are pushed to an in-memory `inputHistory` array (capped at 50). Up arrow cycles backwards through history, Down arrow cycles forwards. Current input is saved/restored when entering/exiting history. Any typing resets the history index.
 
 ### Message Moderation
 - `CLEARCHAT` with trailing: removes all messages from that user. Without trailing: clears entire chat.
@@ -237,18 +252,18 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [x] The converse settings menu should remain and keep its behavior even when normal twitch chat mode is toggled on.
 
 ### Features
-- [ ] Emote autocomplete — type `:` or start a word in input, dropdown of matching emotes from loaded set, tab to complete
-- [ ] Username autocomplete — tab-complete usernames from `messageBuffer` for @mentions
+- [x] Emote autocomplete — type `:` or start a word in input, dropdown of matching emotes from loaded set, tab to complete
+- [x] Username autocomplete — tab-complete usernames from `messageBuffer` for @mentions
 - [ ] Reply threading — render reply-parent IRC tags with visual indicator (quoted parent text or reply line) instead of flat
 - [ ] Reply thread view. Clicking a reply thread message shows a popup chat or similar to scroll through.
-- [ ] Input history (up arrow) — press up in input to cycle through previously sent messages
+- [x] Input history (up arrow) — press up in input to cycle through previously sent messages
 - [x] Gift sub alerts — display gift sub events in chat (mystery gifts collapsible)
 - [ ] First message highlights — visually highlight a user's first message in the channel
 - [ ] Channel points counter — display current channel points balance
 - [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
 - [ ] Channel point redeems. Currently only show up as normal messages.
 - [x] VOD support — make the extension work on VOD pages
-- [ ] Zero width overlapping emotes — support zero-width emotes (e.g. 7TV) that overlay on top of the preceding emote
+- [x] Zero width overlapping emotes — support zero-width emotes (e.g. 7TV) that overlay on top of the preceding emote
 
 ## Icons
 All icons are inline SVGs using Font Awesome 6 Free Solid paths (no FA CSS/fonts bundled). In-chat settings: `fa-gear`. Popup header: `fa-wrench` (opens `chrome://extensions`), `fa-rotate-right` (reload extension). Both sets of action buttons are also in the in-chat settings panel footer.

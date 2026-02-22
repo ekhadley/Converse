@@ -7,6 +7,7 @@ import {
 import { parseIRCMessage } from "./lib/irc.js";
 import { fetchBadges } from "./lib/badges.js";
 import { fetchAllEmotes } from "./lib/emotes.js";
+import { DEFAULT_SETTINGS } from "./lib/settings.js";
 
 // --- State ---
 let ircSocket = null;
@@ -17,16 +18,6 @@ let ircPongReceived = true;
 let joinedChannels = new Set();
 let ports = []; // connected content script ports
 let currentAccount = null; // { login, userId, token }
-
-// --- Settings defaults ---
-const DEFAULT_SETTINGS = {
-  fontSize: 13,
-  showTimestamps: true,
-  showBadges: true,
-  emoteProviders: { twitch: true, "7tv": true, bttv: true, ffz: true },
-  messageCap: 500,
-  chatWidth: null,
-};
 
 async function getSettings() {
   const { settings } = await chrome.storage.local.get("settings");
@@ -276,10 +267,9 @@ async function drainVodComments(port, offset) {
   }
 
   // Drain comments up to current offset
-  const ready = [];
-  while (vod.comments.length && vod.comments[0]._vodOffset <= offset) {
-    ready.push(vod.comments.shift());
-  }
+  let i = 0;
+  while (i < vod.comments.length && vod.comments[i]._vodOffset <= offset) i++;
+  const ready = i > 0 ? vod.comments.splice(0, i) : [];
   if (ready.length) {
     port.postMessage({ type: "vod-comments", comments: ready });
   }
