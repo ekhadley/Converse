@@ -1,17 +1,18 @@
 // Fetch third-party emotes from 7TV, BTTV, FFZ.
 // Returns a unified map: emoteName -> { url, provider }
 
+const CACHE_VERSION = 2; // bump when emote data structure changes
 const CACHE_TTL_GLOBAL = 6 * 60 * 60 * 1000; // 6 hours
 const CACHE_TTL_CHANNEL = 1 * 60 * 60 * 1000; // 1 hour
 
 async function getCached(key) {
   const { [key]: entry } = await chrome.storage.local.get(key);
-  if (entry && Date.now() - entry.ts < entry.ttl) return entry.data;
+  if (entry && entry.v === CACHE_VERSION && Date.now() - entry.ts < entry.ttl) return entry.data;
   return null;
 }
 
 async function setCache(key, data, ttl) {
-  await chrome.storage.local.set({ [key]: { data, ts: Date.now(), ttl } });
+  await chrome.storage.local.set({ [key]: { data, ts: Date.now(), ttl, v: CACHE_VERSION } });
 }
 
 // --- 7TV ---

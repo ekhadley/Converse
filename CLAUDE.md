@@ -12,7 +12,7 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 - `src/lib/auth.js` — OAuth helpers, account CRUD in `chrome.storage.local`.
 - `src/lib/irc.js` — TMI IRC message parser (tags, prefix, command, channel, trailing, username).
 - `src/lib/badges.js` — Fetches global + channel badges from Helix API. Global cached in memory. Channel overrides global. Returns map of `"set_id/version" -> url`.
-- `src/lib/emotes.js` — Fetches 7TV, BTTV, FFZ emotes (global + channel). Cached in `chrome.storage.local` with TTLs (6h global, 1h channel). Priority on name collision: 7TV > BTTV > FFZ. Each provider fetch is wrapped in `safe()` so one failure doesn't break all emotes.
+- `src/lib/emotes.js` — Fetches 7TV, BTTV, FFZ emotes (global + channel). Cached in `chrome.storage.local` with TTLs (6h global, 1h channel) and a `CACHE_VERSION` — bump the version when the emote data structure changes to auto-invalidate stale cache entries. Priority on name collision: 7TV > BTTV > FFZ. Each provider fetch is wrapped in `safe()` so one failure doesn't break all emotes.
 - `src/lib/settings.js` — Shared `DEFAULT_SETTINGS` object imported by background.js and popup.js.
 
 ## Architecture
