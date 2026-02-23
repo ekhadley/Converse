@@ -89,6 +89,17 @@ Uses `msg.tags.color` if present, falls back to `userColors` map (populated from
 ### @Mention Highlighting
 Words starting with `@` followed by a valid username pattern are rendered as `.cvs-mention` spans — bold, colored (using the mentioned user's color from `userColors` or hash fallback), and clickable (opens usercard). Messages that mention the logged-in user get a `.cvs-line-mention` class: purple-tinted background with a left border accent.
 
+### Reply Threading & Thread Panel
+Twitch has no dedicated thread protocol — threads are just PRIVMSGs with `reply-parent-msg-id` and `reply-thread-parent-msg-id` tags. When sending a reply, only `reply-parent-msg-id` is set; Twitch resolves the thread root automatically.
+
+**Reply indicators:** Messages with `reply-parent-msg-id` render a `.cvs-reply-bar` above the message body showing the parent's author and text. Reply bars strip the `@username` prefix from the message body and adjust emote positions accordingly. Each message also has a reply action button (`.cvs-reply-action`) that appears on hover and enters reply mode.
+
+**Reply mode:** `enterReplyMode()` sets `replyTarget` and shows a `.cvs-reply-mode` bar above the input ("Replying to @user"). The outgoing PRIVMSG includes `replyParentMsgId` which background.js sends as `@reply-parent-msg-id=<id>` in the IRC command. Escape key or close button exits reply mode.
+
+**Thread panel:** Clicking a reply bar opens an overlay panel (`.cvs-thread-panel`, `position: absolute`, `z-index: 5`) that covers the top portion of the message list without shifting it. Shows the thread root + all replies (matched by `reply-thread-parent-msg-id` or `reply-parent-msg-id` equal to the root ID) rendered via `buildMessageLine()` with `skipReplyBar: true`. New messages belonging to the open thread are appended live via `appendThreadMessage()`. The panel has its own input (`.cvs-thread-input`) that auto-sends as a reply to the thread root. A drag handle (`.cvs-thread-resize`) at the bottom edge allows resizing (clamped 80px–70%). Height ratio stored in `threadHeightRatio`. Close button (×) in top-left header. Panel closes on channel switch, VOD entry, and VOD seek.
+
+**`buildMessageLine(msg, even, opts)`:** Extracted from `handleIRCMessage` — builds a complete `.cvs-line` DOM element for a PRIVMSG (reply bar, timestamp, badges, username, separator, body, mention highlight, reply action button). Used by main chat rendering, thread panel, and reusable for any context needing message display.
+
 ### VOD Chat Replay
 On VOD pages (`/videos/{id}`), historical chat comments are fetched from Twitch's GQL API (`VideoCommentsByOffsetOrCursor` via `gql.twitch.tv/gql`) and delivered time-synced to video playback. Uses Twitch's first-party Client-ID (`kimne78kx3ncx6brgo4mv6wki5h1ko`) — the extension's own Client-ID returns 400 for GQL.
 
@@ -254,8 +265,8 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ### Features
 - [x] Emote autocomplete — type `:` or start a word in input, dropdown of matching emotes from loaded set, tab to complete
 - [x] Username autocomplete — tab-complete usernames from `messageBuffer` for @mentions
-- [ ] Reply threading — render reply-parent IRC tags with visual indicator (quoted parent text or reply line) instead of flat
-- [ ] Reply thread view. Clicking a reply thread message shows a popup chat or similar to scroll through.
+- [x] Reply threading — render reply-parent IRC tags with visual indicator (quoted parent text or reply line) instead of flat
+- [x] Reply thread view — clicking a reply bar opens a resizable overlay thread panel with its own input
 - [x] Input history (up arrow) — press up in input to cycle through previously sent messages
 - [x] Gift sub alerts — display gift sub events in chat (mystery gifts collapsible)
 - [ ] First message highlights — visually highlight a user's first message in the channel
