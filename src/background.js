@@ -124,9 +124,13 @@ function partChannel(channel) {
   if (ircReady) ircSocket.send(`PART #${channel}`);
 }
 
-function sendMessage(channel, text) {
+function sendMessage(channel, text, replyParentMsgId) {
   if (!currentAccount || !ircReady) return;
-  ircSocket.send(`PRIVMSG #${channel} :${text}`);
+  if (replyParentMsgId) {
+    ircSocket.send(`@reply-parent-msg-id=${replyParentMsgId} PRIVMSG #${channel} :${text}`);
+  } else {
+    ircSocket.send(`PRIVMSG #${channel} :${text}`);
+  }
 }
 
 function broadcast(msg) {
@@ -450,7 +454,7 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     if (msg.type === "send-message") {
-      sendMessage(msg.channel, msg.text);
+      sendMessage(msg.channel, msg.text, msg.replyParentMsgId);
     }
 
     if (msg.type === "get-user-profile") {

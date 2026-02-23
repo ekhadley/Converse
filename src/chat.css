@@ -70,6 +70,7 @@
 }
 
 .cvs-line {
+  position: relative;
   padding: var(--cvs-msg-spacing, 2px) 8px;
   line-height: 1.4;
   word-wrap: break-word;
@@ -164,6 +165,10 @@
 }
 
 .cvs-line-mention {
+  background: rgba(145, 71, 255, 0.12) !important;
+  border-left: 2px solid #9147ff;
+}
+.cvs-line-first-msg {
   background: rgba(145, 71, 255, 0.12) !important;
   border-left: 2px solid #9147ff;
 }
@@ -704,3 +709,40 @@
   color: #898395;
   flex-shrink: 0;
 }
+
+/* --- Thread panel --- */
+
+.cvs-thread-panel { position: absolute; top: 0; left: 0; right: 0; display: flex; flex-direction: column; background: #0e0e10; z-index: 5; overflow: hidden; }
+.cvs-thread-panel.cvs-hidden { display: none; }
+.cvs-thread-header { flex-shrink: 0; display: flex; align-items: center; padding: 4px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.cvs-thread-close { background: none; border: none; color: #898395; cursor: pointer; font-size: 20px; padding: 0 4px; margin-left: 2px; }
+.cvs-thread-close:hover { color: #efeff1; }
+.cvs-thread-messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px 0; scrollbar-width: none; }
+.cvs-thread-messages::-webkit-scrollbar { display: none; }
+.cvs-thread-input-wrap { flex-shrink: 0; margin: 4px 8px; background: rgba(24, 24, 27, 0.85); border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; padding: 4px 8px; }
+.cvs-thread-input { width: 100%; box-sizing: border-box; background: transparent; color: #efeff1; border: none; padding: 4px 6px; font-size: inherit; font-family: inherit; outline: none; }
+.cvs-thread-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.cvs-thread-input::placeholder { color: #898395 !important; }
+.cvs-thread-resize { flex-shrink: 0; height: 6px; cursor: row-resize; background: transparent; position: relative; }
+.cvs-thread-resize::after { content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 32px; height: 2px; background: rgba(255,255,255,0.12); border-radius: 1px; }
+.cvs-thread-resize:hover::after { background: rgba(255,255,255,0.3); }
+
+/* --- Reply threading --- */
+
+.cvs-reply-bar { display: flex; align-items: center; gap: 4px; font-size: 0.8em; color: #898395; cursor: pointer; overflow: hidden; white-space: nowrap; margin-bottom: 1px; }
+.cvs-reply-bar:hover { color: #b8b0cc; }
+.cvs-reply-bar svg { flex-shrink: 0; width: 12px; height: 12px; fill: currentColor; }
+.cvs-reply-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cvs-reply-action { position: absolute; right: 4px; top: 2px; opacity: 0; background: rgba(15, 15, 20, 0.85); border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; color: #898395; cursor: pointer; padding: 2px 4px; z-index: 2; transition: opacity 0.1s; }
+.cvs-line:hover .cvs-reply-action { opacity: 1; }
+.cvs-reply-action:hover { color: #efeff1; background: rgba(30, 30, 40, 0.95); }
+
+.cvs-reply-mode { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 4px 12px; margin: 0 8px; background: rgba(120, 68, 232, 0.15); border: 1px solid rgba(120, 68, 232, 0.3); border-bottom: none; border-radius: 8px 8px 0 0; font-size: 12px; color: #b8b0cc; }
+.cvs-reply-mode.cvs-hidden { display: none; }
+.cvs-reply-mode:not(.cvs-hidden) + .cvs-input-wrap { border-top-left-radius: 0; border-top-right-radius: 0; border-top-color: rgba(120, 68, 232, 0.3); }
+.cvs-reply-mode-close { background: none; border: none; color: #898395; cursor: pointer; font-size: 16px; padding: 0 2px; }
+.cvs-reply-mode-close:hover { color: #efeff1; }
+
+.cvs-line-highlight { animation: cvs-flash 1.5s ease-out; }
+@keyframes cvs-flash { 0% { background: rgba(120, 68, 232, 0.35); } 100% { background: inherit; } }

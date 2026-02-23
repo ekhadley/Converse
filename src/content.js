@@ -42,6 +42,14 @@ let lastVodOffset = -1;
 let cachedVideo = null;
 let acEl, acItems = [], acIndex = -1, acMode = null, acTokenStart = -1;
 let inputHistory = [], historyIndex = -1, historySaved = "";
+let replyTarget = null; // { msgId, username, displayName }
+let replyModeEl = null;
+let currentThread = null; // { rootId } or null
+let threadPanel = null;
+let threadMsgList = null;
+let threadInputEl = null;
+let threadResizeHandle = null;
+let threadHeightRatio = 0.3; // fraction of #cvs-chat height
 
 // --- Channel detection ---
 function getChannel() {
@@ -249,6 +257,7 @@ function buildChatUI(shell) {
       if (e.key === "ArrowUp") { e.preventDefault(); acIndex = Math.max(acIndex - 1, 0); highlightAcItem(); return; }
       if (e.key === "Enter") { e.preventDefault(); if (acIndex < 0) acIndex = 0; acceptAutocomplete(); return; }
     } else {
+      if (e.key === "Escape" && replyTarget) { e.preventDefault(); exitReplyMode(); return; }
       if (e.key === "ArrowUp" && inputHistory.length) {
         e.preventDefault();
         if (historyIndex === -1) historySaved = inputEl.value;
@@ -267,13 +276,26 @@ function buildChatUI(shell) {
     if (e.key === "Enter" && inputEl.value.trim()) {
       const text = inputEl.value.trim();
       if (account && currentChannel) {
-        port.postMessage({ type: "send-message", channel: currentChannel, text });
-        handleIRCMessage({ command: "PRIVMSG", channel: currentChannel, username: account.login, trailing: text, tags: { "display-name": account.login, "tmi-sent-ts": String(Date.now()) } });
+        const portMsg = { type: "send-message", channel: currentChannel, text };
+        const tags = { "display-name": account.login, "tmi-sent-ts": String(Date.now()) };
+        let echoTrailing = text;
+        if (replyTarget) {
+          portMsg.replyParentMsgId = replyTarget.msgId;
+          tags["reply-parent-msg-id"] = replyTarget.msgId;
+          tags["reply-parent-display-name"] = replyTarget.displayName;
+          tags["reply-parent-user-login"] = replyTarget.username;
+          const parentMsg = messageBuffer.find(m => m.tags?.id === replyTarget.msgId);
+          tags["reply-parent-msg-body"] = parentMsg?.trailing || "";
+          echoTrailing = `@${replyTarget.username} ${text}`;
+        }
+        port.postMessage(portMsg);
+        handleIRCMessage({ command: "PRIVMSG", channel: currentChannel, username: account.login, trailing: echoTrailing, tags });
         inputHistory.push(text);
         if (inputHistory.length > 50) inputHistory.shift();
         historyIndex = -1;
         inputEl.value = "";
         closeAutocomplete();
+        exitReplyMode();
         updateInputOverlay();
       }
     }
@@ -412,12 +434,84 @@ function buildChatUI(shell) {
   acEl = document.createElement("div");
   acEl.className = "cvs-autocomplete cvs-hidden";
 
+  // Thread panel (tiled above message list)
+  threadPanel = document.createElement("div");
+  threadPanel.className = "cvs-thread-panel cvs-hidden";
+  const threadHeader = document.createElement("div");
+  threadHeader.className = "cvs-thread-header";
+  const threadCloseBtn = document.createElement("button");
+  threadCloseBtn.className = "cvs-thread-close";
+  threadCloseBtn.textContent = "\u00d7";
+  threadCloseBtn.addEventListener("click", closeThread);
+  threadHeader.appendChild(threadCloseBtn);
+  threadMsgList = document.createElement("div");
+  threadMsgList.className = "cvs-thread-messages";
+  threadMsgList.addEventListener("mouseover", (e) => {
+    if (tooltipLocked) return;
+    const emote = e.target.closest(".cvs-emote");
+    if (emote) { showTooltip(emote); tooltipLocked = true; }
+  });
+  threadMsgList.addEventListener("mousemove", (e) => {
+    tooltipLocked = false;
+    const emote = e.target.closest(".cvs-emote");
+    if (emote) showTooltip(emote);
+    else hideTooltip();
+  });
+  threadMsgList.addEventListener("mouseleave", hideTooltip);
+  threadMsgList.addEventListener("click", (e) => {
+    const userSpan = e.target.closest(".cvs-user");
+    if (userSpan) { const line = userSpan.closest(".cvs-line"); if (line) openUsercard(line.dataset.user, e); return; }
+    const mention = e.target.closest(".cvs-mention");
+    if (mention) openUsercard(mention.dataset.user, e);
+  });
+  // Thread input
+  const threadInputWrap = document.createElement("div");
+  threadInputWrap.className = "cvs-thread-input-wrap";
+  threadInputEl = document.createElement("input");
+  threadInputEl.className = "cvs-thread-input";
+  threadInputEl.type = "text";
+  threadInputEl.maxLength = 500;
+  threadInputEl.placeholder = "Reply in thread\u2026";
+  threadInputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && threadInputEl.value.trim() && account && currentChannel && currentThread) {
+      const text = threadInputEl.value.trim();
+      const rootId = currentThread.rootId;
+      // Find the latest message in the thread to reply to (keeps thread chain intact)
+      const rootMsg = messageBuffer.find(m => m.tags?.id === rootId);
+      const portMsg = { type: "send-message", channel: currentChannel, text, replyParentMsgId: rootId };
+      const tags = { "display-name": account.login, "tmi-sent-ts": String(Date.now()), "reply-parent-msg-id": rootId, "reply-thread-parent-msg-id": rootId };
+      if (rootMsg) {
+        tags["reply-parent-display-name"] = rootMsg.tags?.["display-name"] || rootMsg.username;
+        tags["reply-parent-user-login"] = rootMsg.username;
+        tags["reply-parent-msg-body"] = rootMsg.trailing || "";
+      }
+      const echoTrailing = rootMsg ? `@${rootMsg.username} ${text}` : text;
+      port.postMessage(portMsg);
+      handleIRCMessage({ command: "PRIVMSG", channel: currentChannel, username: account.login, trailing: echoTrailing, tags });
+      threadInputEl.value = "";
+    }
+  });
+  threadInputWrap.appendChild(threadInputEl);
+  // Resize handle at bottom of thread panel
+  threadResizeHandle = document.createElement("div");
+  threadResizeHandle.className = "cvs-thread-resize";
+  threadResizeHandle.addEventListener("mousedown", startThreadResize);
+  threadPanel.appendChild(threadHeader);
+  threadPanel.appendChild(threadMsgList);
+  threadPanel.appendChild(threadInputWrap);
+  threadPanel.appendChild(threadResizeHandle);
+
   inputWrap.appendChild(inputOverlay);
   inputWrap.appendChild(inputEl);
   chatContainer.appendChild(messageList);
+  chatContainer.appendChild(threadPanel);
   chatContainer.appendChild(scrollbar);
   chatContainer.appendChild(pauseBar);
+  replyModeEl = document.createElement("div");
+  replyModeEl.className = "cvs-reply-mode cvs-hidden";
+
   chatContainer.appendChild(acEl);
+  chatContainer.appendChild(replyModeEl);
   chatContainer.appendChild(inputWrap);
   shell.appendChild(chatContainer);
   shell.appendChild(settingsBtn);
@@ -702,6 +796,185 @@ function collapsedCSS() {
   `;
 }
 
+// --- Reply mode ---
+const REPLY_SVG = `<svg width="12" height="12" viewBox="0 0 512 512" fill="currentColor"><path d="M205.3 4.7c-6.2-6.2-16.4-6.2-22.6 0l-176 176c-6.2 6.2-6.2 16.4 0 22.6l176 176c6.2 6.2 16.4 6.2 22.6 0s6.2-16.4 0-22.6L54.6 208H192c70.7 0 128 57.3 128 128v64c0 8.8 7.2 16 16 16s16-7.2 16-16V336c0-88.4-71.6-160-160-160H54.6L205.3 27.3c6.2-6.2 6.2-16.4 0-22.6z"/></svg>`;
+
+function adjustEmotePositions(emotesTag, offset) {
+  if (!emotesTag) return emotesTag;
+  return emotesTag.split("/").map(entry => {
+    const [id, positions] = entry.split(":");
+    const adjusted = positions.split(",").map(pos => {
+      const [start, end] = pos.split("-").map(Number);
+      return (start - offset) + "-" + (end - offset);
+    }).join(",");
+    return id + ":" + adjusted;
+  }).join("/");
+}
+
+function enterReplyMode(msgId, username, displayName) {
+  replyTarget = { msgId, username, displayName };
+  if (!replyModeEl) return;
+  replyModeEl.innerHTML = `<span>Replying to <strong>@${displayName}</strong></span><button class="cvs-reply-mode-close">&times;</button>`;
+  replyModeEl.querySelector(".cvs-reply-mode-close").addEventListener("click", exitReplyMode);
+  replyModeEl.classList.remove("cvs-hidden");
+  if (inputEl) inputEl.focus();
+}
+
+function exitReplyMode() {
+  replyTarget = null;
+  if (replyModeEl) { replyModeEl.classList.add("cvs-hidden"); replyModeEl.innerHTML = ""; }
+}
+
+// --- Thread panel ---
+function openThread(rootId) {
+  if (!threadPanel || !threadMsgList) return;
+  currentThread = { rootId };
+  threadMsgList.innerHTML = "";
+  const msgs = messageBuffer.filter(m => m.tags?.id === rootId || m.tags?.["reply-thread-parent-msg-id"] === rootId || m.tags?.["reply-parent-msg-id"] === rootId);
+  let even = false;
+  for (const m of msgs) {
+    threadMsgList.appendChild(buildMessageLine(m, even, { skipReplyBar: true }));
+    even = !even;
+  }
+  threadPanel.classList.remove("cvs-hidden");
+  threadPanel.style.height = `${threadHeightRatio * 100}%`;
+  threadMsgList.scrollTop = threadMsgList.scrollHeight;
+  if (threadInputEl) {
+    threadInputEl.disabled = !account || !currentChannel || !!vodId;
+    threadInputEl.placeholder = vodId ? "Replay chat" : !account ? "Log in to chat" : "Reply in thread\u2026";
+  }
+}
+
+function closeThread() {
+  currentThread = null;
+  if (threadPanel) threadPanel.classList.add("cvs-hidden");
+  if (threadMsgList) threadMsgList.innerHTML = "";
+}
+
+function appendThreadMessage(msg) {
+  if (!threadMsgList) return;
+  const even = threadMsgList.childElementCount % 2 === 1;
+  const atBottom = threadMsgList.scrollHeight - threadMsgList.scrollTop - threadMsgList.clientHeight < 30;
+  threadMsgList.appendChild(buildMessageLine(msg, even, { skipReplyBar: true }));
+  while (threadMsgList.childElementCount > settings.messageCap) threadMsgList.firstElementChild.remove();
+  if (atBottom) threadMsgList.scrollTop = threadMsgList.scrollHeight;
+}
+
+function startThreadResize(e) {
+  e.preventDefault();
+  const startY = e.clientY;
+  const chatRect = chatContainer.getBoundingClientRect();
+  const startH = threadPanel.getBoundingClientRect().height;
+  function onMove(e) {
+    const newH = Math.max(80, Math.min(chatRect.height * 0.7, startH + (e.clientY - startY)));
+    threadHeightRatio = newH / chatRect.height;
+    threadPanel.style.height = newH + "px";
+  }
+  function onUp() {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
+// --- Build a PRIVMSG line element ---
+function buildMessageLine(msg, even, opts = {}) {
+  const line = document.createElement("div");
+  line.className = "cvs-line" + (even ? " cvs-line-even" : "") + (msg.tags?.["custom-reward-id"] ? " cvs-line-redeem" : "");
+  line.dataset.user = msg.username;
+  if (msg.tags?.id) line.dataset.msgId = msg.tags.id;
+
+  // Reply indicator
+  if (!opts.skipReplyBar && msg.tags?.["reply-parent-msg-id"]) {
+    const replyBar = document.createElement("div");
+    replyBar.className = "cvs-reply-bar";
+    replyBar.innerHTML = REPLY_SVG;
+    const replyText = document.createElement("span");
+    replyText.className = "cvs-reply-text";
+    replyText.textContent = `@${msg.tags["reply-parent-display-name"] || msg.tags["reply-parent-user-login"]}: ${msg.tags["reply-parent-msg-body"] || ""}`;
+    replyBar.appendChild(replyText);
+    const rootId = msg.tags["reply-thread-parent-msg-id"] || msg.tags["reply-parent-msg-id"];
+    replyBar.addEventListener("click", () => openThread(rootId));
+    line.appendChild(replyBar);
+    line.classList.add("cvs-line-reply");
+  }
+
+  // Timestamp
+  const ts = makeSystemTimestamp(msg);
+  if (ts) line.appendChild(ts);
+
+  // Badges
+  if (settings.showBadges && msg.tags?.badges) {
+    const badgeStr = msg.tags.badges;
+    for (const badge of badgeStr.split(",")) {
+      if (!badge) continue;
+      const url = badges[badge];
+      if (url) {
+        const img = document.createElement("img");
+        img.className = "cvs-badge";
+        img.src = url;
+        img.alt = badge.split("/")[0];
+        line.appendChild(img);
+      }
+    }
+  }
+
+  // Track user color from IRC tags (skip unreadable dark colors)
+  const tagColor = msg.tags?.color;
+  const readable = tagColor && isColorReadable(tagColor);
+  if (readable) userColors[msg.username] = tagColor;
+
+  // Username
+  const userSpan = document.createElement("span");
+  userSpan.className = "cvs-user";
+  const displayName = msg.tags?.["display-name"] || msg.username;
+  userSpan.textContent = displayName;
+  const color = (readable ? tagColor : null) || userColors[msg.username] || hashColor(msg.username);
+  userSpan.style.color = color;
+  line.appendChild(userSpan);
+
+  // Separator
+  const sep = document.createElement("span");
+  sep.className = "cvs-sep";
+  sep.textContent = ": ";
+  line.appendChild(sep);
+
+  // Message body with emotes — strip @username prefix on replies
+  const bodySpan = document.createElement("span");
+  bodySpan.className = "cvs-body";
+  let bodyText = msg.trailing || "";
+  let emotesTag = msg.tags?.emotes;
+  if (msg.tags?.["reply-parent-msg-id"]) {
+    const parentLogin = msg.tags["reply-parent-user-login"];
+    const prefix = `@${parentLogin} `;
+    if (parentLogin && bodyText.startsWith(prefix)) {
+      bodyText = bodyText.slice(prefix.length);
+      emotesTag = adjustEmotePositions(emotesTag, prefix.length);
+    }
+  }
+  renderMessageBody(bodySpan, bodyText, emotesTag);
+  line.appendChild(bodySpan);
+
+  // Highlight messages that mention the logged-in user
+  if (mentionRe && msg.trailing && mentionRe.test(msg.trailing)) line.classList.add("cvs-line-mention");
+  if (msg.tags?.["first-msg"] === "1") line.classList.add("cvs-line-first-msg");
+
+  // Reply action button
+  if (msg.tags?.id) {
+    const replyBtn = document.createElement("button");
+    replyBtn.className = "cvs-reply-action";
+    replyBtn.innerHTML = REPLY_SVG;
+    replyBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      enterReplyMode(msg.tags.id, msg.username, msg.tags?.["display-name"] || msg.username);
+    });
+    line.appendChild(replyBtn);
+  }
+
+  return line;
+}
+
 // --- IRC message rendering ---
 function formatSubTier(plan) {
   if (plan === "2000") return "Tier 2";
@@ -857,62 +1130,19 @@ function handleIRCMessage(msg) {
   messageBuffer.push(msg);
   if (messageBuffer.length > settings.messageCap) messageBuffer.shift();
 
-  const line = document.createElement("div");
-  line.className = "cvs-line" + (msgEven ? " cvs-line-even" : "") + (msg.tags?.["custom-reward-id"] ? " cvs-line-redeem" : "");
+  const line = buildMessageLine(msg, msgEven);
   msgEven = !msgEven;
-  line.dataset.user = msg.username;
-  if (msg.tags?.id) line.dataset.msgId = msg.tags.id;
-
-  // Timestamp
-  const ts = makeSystemTimestamp(msg);
-  if (ts) line.appendChild(ts);
-
-  // Badges
-  if (settings.showBadges && msg.tags?.badges) {
-    const badgeStr = msg.tags.badges;
-    for (const badge of badgeStr.split(",")) {
-      if (!badge) continue;
-      const url = badges[badge];
-      if (url) {
-        const img = document.createElement("img");
-        img.className = "cvs-badge";
-        img.src = url;
-        img.alt = badge.split("/")[0];
-        line.appendChild(img);
-      }
-    }
-  }
-
-  // Track user color from IRC tags (skip unreadable dark colors)
-  const tagColor = msg.tags?.color;
-  const readable = tagColor && isColorReadable(tagColor);
-  if (readable) userColors[msg.username] = tagColor;
-
-  // Username
-  const userSpan = document.createElement("span");
-  userSpan.className = "cvs-user";
-  const displayName = msg.tags?.["display-name"] || msg.username;
-  userSpan.textContent = displayName;
-  const color = (readable ? tagColor : null) || userColors[msg.username] || hashColor(msg.username);
-  userSpan.style.color = color;
-  line.appendChild(userSpan);
-
-  // Separator
-  const sep = document.createElement("span");
-  sep.className = "cvs-sep";
-  sep.textContent = ": ";
-  line.appendChild(sep);
-
-  // Message body with emotes
-  const bodySpan = document.createElement("span");
-  bodySpan.className = "cvs-body";
-  renderMessageBody(bodySpan, msg.trailing || "", msg.tags?.emotes);
-  line.appendChild(bodySpan);
-
-  // Highlight messages that mention the logged-in user
-  if (mentionRe && msg.trailing && mentionRe.test(msg.trailing)) line.classList.add("cvs-line-mention");
 
   queueLine(line);
+
+  // Live-update thread panel if this message belongs to the open thread
+  if (currentThread) {
+    const rootId = currentThread.rootId;
+    const id = msg.tags?.id;
+    const threadParent = msg.tags?.["reply-thread-parent-msg-id"];
+    const replyParent = msg.tags?.["reply-parent-msg-id"];
+    if (id === rootId || threadParent === rootId || replyParent === rootId) appendThreadMessage(msg);
+  }
 }
 
 // --- Emote rendering ---
@@ -1450,6 +1680,8 @@ function startVodPoll() {
       if (messageList) messageList.innerHTML = "";
       messageBuffer = [];
       pendingMysteryGifts = {};
+      exitReplyMode();
+      closeThread();
       msgEven = false;
       port.postMessage({ type: "vod-seek", videoId: vodId, offset });
     } else {
@@ -1486,6 +1718,8 @@ function pollChannel() {
       pendingMysteryGifts = {};
       closeUsercard();
       closeAutocomplete();
+      exitReplyMode();
+      closeThread();
       updateInputPlaceholder();
       if (port) port.postMessage({ type: "vod-changed", videoId: vid });
       startVodPoll();
@@ -1511,6 +1745,8 @@ function pollChannel() {
     pendingMysteryGifts = {};
     closeUsercard();
     closeAutocomplete();
+    exitReplyMode();
+    closeThread();
   }
 }
 
