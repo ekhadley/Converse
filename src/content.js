@@ -44,6 +44,7 @@ let acEl, acItems = [], acIndex = -1, acMode = null, acTokenStart = -1;
 let inputHistory = [], historyIndex = -1, historySaved = "";
 let replyTarget = null; // { msgId, username, displayName }
 let replyModeEl = null;
+let pointsEl = null;
 let currentThread = null; // { rootId } or null
 let threadPanel = null;
 let threadMsgList = null;
@@ -503,6 +504,17 @@ function buildChatUI(shell) {
 
   inputWrap.appendChild(inputOverlay);
   inputWrap.appendChild(inputEl);
+
+  // Channel points display
+  pointsEl = document.createElement("div");
+  pointsEl.className = "cvs-points cvs-hidden";
+  pointsEl.innerHTML = `<svg width="14" height="14" viewBox="0 0 20 20" fill="#9147ff"><path d="M10 6a4 4 0 0 1 4 4h-2a2 2 0 0 0-2-2V6z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0zm-2 0a6 6 0 1 1-12 0 6 6 0 0 1 12 0z"/></svg><span></span>`;
+
+  const inputRow = document.createElement("div");
+  inputRow.className = "cvs-input-row";
+  inputRow.appendChild(inputWrap);
+  inputRow.appendChild(pointsEl);
+
   chatContainer.appendChild(messageList);
   chatContainer.appendChild(threadPanel);
   chatContainer.appendChild(scrollbar);
@@ -512,7 +524,7 @@ function buildChatUI(shell) {
 
   chatContainer.appendChild(acEl);
   chatContainer.appendChild(replyModeEl);
-  chatContainer.appendChild(inputWrap);
+  chatContainer.appendChild(inputRow);
   shell.appendChild(chatContainer);
   shell.appendChild(settingsBtn);
   shell.appendChild(settingsPanel);
@@ -531,6 +543,25 @@ function updateInputPlaceholder() {
     inputEl.placeholder = "Log in to chat";
     inputEl.disabled = true;
   }
+}
+
+function updatePoints(text) {
+  if (!pointsEl) return;
+  if (!text) { pointsEl.classList.add("cvs-hidden"); return; }
+  pointsEl.querySelector("span").textContent = text;
+  pointsEl.classList.remove("cvs-hidden");
+}
+
+function pollChannelPoints() {
+  if (vodId || !currentChannel) { updatePoints(null); return; }
+  const el = document.querySelector('.community-points-summary');
+  if (!el) { updatePoints(null); return; }
+  // Find the deepest element whose text looks like a balance (2+ chars, digits with optional K/M suffix)
+  for (const child of el.querySelectorAll('span')) {
+    const t = child.textContent.trim();
+    if (t.length >= 2 && /^[\d,.]+[KMkm]?$/.test(t) && child.children.length === 0) { updatePoints(t); return; }
+  }
+  updatePoints(null);
 }
 
 // --- Scroll ---
@@ -1720,6 +1751,7 @@ function pollChannel() {
       closeAutocomplete();
       exitReplyMode();
       closeThread();
+      updatePoints(null);
       updateInputPlaceholder();
       if (port) port.postMessage({ type: "vod-changed", videoId: vid });
       startVodPoll();
@@ -1747,6 +1779,7 @@ function pollChannel() {
     closeAutocomplete();
     exitReplyMode();
     closeThread();
+    updatePoints(null);
   }
 }
 
@@ -1792,6 +1825,7 @@ function init() {
 
   // Also poll periodically as a fallback for SPA navigations
   setInterval(pollChannel, 1500);
+  setInterval(pollChannelPoints, 3000);
 }
 
 if (document.readyState === "loading") {

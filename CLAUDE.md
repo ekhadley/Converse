@@ -86,6 +86,9 @@ Uses `msg.tags.color` if present, falls back to `userColors` map (populated from
 ### Gift Sub Alerts
 `USERNOTICE` messages with `msg-id` of `subgift`, `submysterygift`, or `anonsubgift` render as grayed-out system lines (`.cvs-line-system`). Mystery gifts ("X is gifting N Tier 1 subs!") include a collapsible dropdown (▸/▾ toggle) that accumulates recipient names from the subsequent individual `subgift` messages via `pendingMysteryGifts` map (keyed by gifter username, tracks remaining count and the names DOM element). Standalone gift subs render as "X gifted a Tier 1 sub to Y". Anonymous gifters (`ananonymousgifter`) display as "Anonymous". `pendingMysteryGifts` is cleared on channel switch, VOD change, and VOD seek.
 
+### Channel Points Counter
+Displays the user's channel points balance to the right of the chat input, inside a `.cvs-input-row` flex wrapper. Read directly from Twitch's native `.community-points-summary` DOM element (hidden by our CSS but still live in the DOM). Polled every 3s via `pollChannelPoints()`. Shows a channel points icon (SVG) + formatted balance (e.g. "333.9K"). Hidden on VOD pages, when no channel is active, or when the native element isn't present (channel has no points program). No GQL or background involvement — purely content script DOM scraping.
+
 ### @Mention Highlighting
 Words starting with `@` followed by a valid username pattern are rendered as `.cvs-mention` spans — bold, colored (using the mentioned user's color from `userColors` or hash fallback), and clickable (opens usercard). Messages that mention the logged-in user get a `.cvs-line-mention` class: purple-tinted background with a left border accent.
 
@@ -256,25 +259,17 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ### Bugs
 - [ ] Sometimes animated emotes appear frozen. One message may have the emote be frozen, the next will have them working. It isn't a chat-wide or emote-wide issue.
 - [ ] When hovering an emote, sometimes an old emote tooltip will be shown, with the correct emote name but some other emote as the display image/gif (possibly just for first time hovering a new emote, not sure).
-- [x] Chat sometimes clears all messages and fails to resume — root cause: GQL `hasNext: false` during chat gaps set `endOffset = Infinity`, permanently disabling fetching. Fixed by advancing `endOffset` to current offset instead, so fetching resumes as video progresses.
 
 ### Small Tweaks
-- [x] Remove black as a possible name color
-- [x] The converse settings menu should remain and keep its behavior even when normal twitch chat mode is toggled on.
 
 ### Features
-- [x] Emote autocomplete — type `:` or start a word in input, dropdown of matching emotes from loaded set, tab to complete
-- [x] Username autocomplete — tab-complete usernames from `messageBuffer` for @mentions
-- [x] Reply threading — render reply-parent IRC tags with visual indicator (quoted parent text or reply line) instead of flat
-- [x] Reply thread view — clicking a reply bar opens a resizable overlay thread panel with its own input
-- [x] Input history (up arrow) — press up in input to cycle through previously sent messages
-- [x] Gift sub alerts — display gift sub events in chat (mystery gifts collapsible)
 - [ ] First message highlights — visually highlight a user's first message in the channel
-- [ ] Channel points counter — display current channel points balance
+- [x] Channel points counter — display current channel points balance
 - [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
 - [ ] Channel point redeems. Currently only show up as normal messages.
-- [x] VOD support — make the extension work on VOD pages
-- [x] Zero width overlapping emotes — support zero-width emotes (e.g. 7TV) that overlay on top of the preceding emote
+- [ ] Channel points menu — click points counter to open rewards menu for redeeming
+- [ ] Predictions — display and interact with channel predictions
+- [ ] Polls — display and interact with channel polls
 
 ## Icons
 All icons are inline SVGs using Font Awesome 6 Free Solid paths (no FA CSS/fonts bundled). In-chat settings: `fa-gear`. Popup header: `fa-wrench` (opens `chrome://extensions`), `fa-rotate-right` (reload extension). Both sets of action buttons are also in the in-chat settings panel footer.

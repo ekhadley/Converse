@@ -234,14 +234,33 @@
 
 /* --- Input --- */
 
-.cvs-input-wrap {
+.cvs-input-row {
+  display: flex;
+  align-items: stretch;
   flex-shrink: 0;
   margin: 4px 8px;
+}
+
+.cvs-input-wrap {
+  flex: 1;
+  min-width: 0;
   background: rgba(24, 24, 27, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 10px;
   padding: 4px 8px;
   position: relative;
+}
+
+.cvs-points {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  color: #dedee3;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .cvs-input-overlay {
@@ -740,7 +759,7 @@
 
 .cvs-reply-mode { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 4px 12px; margin: 0 8px; background: rgba(120, 68, 232, 0.15); border: 1px solid rgba(120, 68, 232, 0.3); border-bottom: none; border-radius: 8px 8px 0 0; font-size: 12px; color: #b8b0cc; }
 .cvs-reply-mode.cvs-hidden { display: none; }
-.cvs-reply-mode:not(.cvs-hidden) + .cvs-input-wrap { border-top-left-radius: 0; border-top-right-radius: 0; border-top-color: rgba(120, 68, 232, 0.3); }
+.cvs-reply-mode:not(.cvs-hidden) + .cvs-input-row .cvs-input-wrap { border-top-left-radius: 0; border-top-right-radius: 0; border-top-color: rgba(120, 68, 232, 0.3); }
 .cvs-reply-mode-close { background: none; border: none; color: #898395; cursor: pointer; font-size: 16px; padding: 0 2px; }
 .cvs-reply-mode-close:hover { color: #efeff1; }
 
