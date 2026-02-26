@@ -45,7 +45,7 @@ On channel join, fetches backfill from `recent-messages.robotty.de`. Deduplicati
 Twitch emotes parsed from IRC `emotes` tag (position-based). Third-party emotes matched by word against the `thirdPartyEmotes` map (populated from background on channel join). Each provider individually toggleable in settings. Zero-width emotes (7TV `flags & 1`) are stacked onto the preceding emote via `.cvs-emote-stack` wrappers with absolute positioning. Messages are rendered via RAF-batched `queueLine()` / `flushMessages()` for performance.
 
 ### Emote Tooltip
-Hover an emote to see a 3x preview, name, provider label (7TV/BetterTTV/FrankerFaceZ/Twitch), and scope (Native/Channel/Global). Positioned above the emote, flips below if clipped at top, clamped horizontally.
+Hover an emote to see a 3x preview, name, provider label (7TV/BetterTTV/FrankerFaceZ/Twitch), and scope (Native/Channel/Global). Positioned above the emote, flips below if clipped at top, clamped horizontally. The tooltip img is wrapped in `.cvs-tooltip-img-wrap`; while the 3x image loads, `cvs-tooltip-loading` on the tooltip hides the img and shows a CSS spinner via `::after` on the wrapper. Cached images skip the spinner (`img.complete` check).
 
 **Scroll lock:** `tooltipLocked` flag prevents scroll-triggered tooltip switching. When `mouseover` fires on an emote (e.g. a new message scrolling under the cursor), the tooltip shows and `tooltipLocked` is set. While locked, further `mouseover` events are ignored. Any `mousemove` clears the lock and re-evaluates normally. This way the tooltip sticks to the original emote until the user physically moves the mouse.
 
@@ -263,7 +263,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 
 ### Bugs
 - [ ] Sometimes animated emotes appear frozen. One message may have the emote be frozen, the next will have them working. It isn't a chat-wide or emote-wide issue.
-- [ ] When hovering an emote, sometimes an old emote tooltip will be shown, with the correct emote name but some other emote as the display image/gif (possibly just for first time hovering a new emote, not sure).
+- [x] When hovering an emote, sometimes an old emote tooltip will be shown, with the correct emote name but some other emote as the display image/gif (possibly just for first time hovering a new emote, not sure). — Fixed: tooltip now shows a loading spinner until the 3x image loads.
 
 ### Small Tweaks
 
