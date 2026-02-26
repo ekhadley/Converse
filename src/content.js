@@ -1453,7 +1453,7 @@ function ensureTooltip() {
   if (tooltipEl) return;
   tooltipEl = document.createElement("div");
   tooltipEl.className = "cvs-tooltip cvs-hidden";
-  tooltipEl.innerHTML = `<img class="cvs-tooltip-img"><div class="cvs-tooltip-details"><span class="cvs-tooltip-name"></span><span class="cvs-tooltip-provider"></span></div><div class="cvs-tooltip-scope"></div>`;
+  tooltipEl.innerHTML = `<div class="cvs-tooltip-img-wrap"><img class="cvs-tooltip-img"></div><div class="cvs-tooltip-details"><span class="cvs-tooltip-name"></span><span class="cvs-tooltip-provider"></span></div><div class="cvs-tooltip-scope"></div>`;
   document.body.appendChild(tooltipEl);
 }
 
@@ -1463,7 +1463,12 @@ function showTooltip(emoteImg) {
   const scope = emoteImg.dataset.scope;
   const name = emoteImg.alt;
 
-  tooltipEl.querySelector(".cvs-tooltip-img").src = emoteUrl3x(emoteImg.src, provider);
+  const img = tooltipEl.querySelector(".cvs-tooltip-img");
+  const newSrc = emoteUrl3x(emoteImg.src, provider);
+  tooltipEl.classList.add("cvs-tooltip-loading");
+  img.onload = img.onerror = () => tooltipEl.classList.remove("cvs-tooltip-loading");
+  img.src = newSrc;
+  if (img.complete) tooltipEl.classList.remove("cvs-tooltip-loading");
   tooltipEl.querySelector(".cvs-tooltip-name").textContent = name;
   tooltipEl.querySelector(".cvs-tooltip-provider").textContent = PROVIDER_LABELS[provider] || provider;
   tooltipEl.querySelector(".cvs-tooltip-scope").textContent = scope === "native" ? "Native" : scope === "channel" ? "Channel" : "Global";

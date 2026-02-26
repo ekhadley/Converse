@@ -334,12 +334,39 @@
   color: #efeff1;
 }
 
+.cvs-tooltip-img-wrap {
+  position: relative;
+  min-height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
 .cvs-tooltip-img {
   display: block;
   height: 84px;
   width: auto;
-  margin: 0 auto 8px;
   image-rendering: auto;
+}
+
+.cvs-tooltip-loading .cvs-tooltip-img {
+  opacity: 0;
+}
+
+.cvs-tooltip-loading .cvs-tooltip-img-wrap::after {
+  content: '';
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: rgba(255, 255, 255, 0.6);
+  border-radius: 50%;
+  animation: cvs-spin 0.6s linear infinite;
+  position: absolute;
+}
+
+@keyframes cvs-spin {
+  to { transform: rotate(360deg); }
 }
 
 .cvs-tooltip-details {
