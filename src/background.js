@@ -144,9 +144,10 @@ function broadcast(msg) {
   });
 }
 
-// --- GQL (VOD comments) ---
+// --- GQL ---
 const GQL_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko";
-const GQL_HASH = "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a";
+const GQL_VOD_HASH = "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a";
+const GQL_REWARDS_HASH = "1530a003a7d374b0380b79db0be0534f30ff46e61cffa2bc0e2468a909fbc024";
 
 async function gqlFetch(body) {
   const res = await fetch("https://gql.twitch.tv/gql", {
@@ -156,6 +157,23 @@ async function gqlFetch(body) {
   });
   if (!res.ok) throw new Error(`GQL: ${res.status}`);
   return res.json();
+}
+
+async function fetchChannelRewards(channelLogin) {
+  try {
+    const data = await gqlFetch({
+      operationName: "ChannelPointsContext",
+      variables: { channelLogin },
+      extensions: { persistedQuery: { version: 1, sha256Hash: GQL_REWARDS_HASH } },
+    });
+    const rewards = data?.data?.community?.channel?.communityPointsSettings?.customRewards || [];
+    const map = {};
+    for (const r of rewards) map[r.id] = r.title;
+    return map;
+  } catch (e) {
+    console.error("Failed to fetch channel rewards:", e);
+    return {};
+  }
 }
 
 async function fetchVodInfo(videoId) {
@@ -169,7 +187,7 @@ async function fetchVodCommentsByOffset(videoId, offsetSeconds) {
   const data = await gqlFetch({
     operationName: "VideoCommentsByOffsetOrCursor",
     variables: { videoID: videoId, contentOffsetSeconds: offsetSeconds },
-    extensions: { persistedQuery: { version: 1, sha256Hash: GQL_HASH } },
+    extensions: { persistedQuery: { version: 1, sha256Hash: GQL_VOD_HASH } },
   });
   const comments = data?.data?.video?.comments;
   return {
@@ -183,7 +201,7 @@ async function fetchVodCommentsByCursor(videoId, cursor) {
   const data = await gqlFetch({
     operationName: "VideoCommentsByOffsetOrCursor",
     variables: { videoID: videoId, cursor },
-    extensions: { persistedQuery: { version: 1, sha256Hash: GQL_HASH } },
+    extensions: { persistedQuery: { version: 1, sha256Hash: GQL_VOD_HASH } },
   });
   const comments = data?.data?.video?.comments;
   return {
@@ -391,15 +409,16 @@ chrome.runtime.onConnect.addListener((port) => {
       try {
         const userId = await getUserId(channel);
         if (userId) {
-          const [badges, emotes, recentMessages] = await Promise.all([
+          const [badges, emotes, recentMessages, rewards] = await Promise.all([
             fetchBadges(helixFetch, userId),
             fetchAllEmotes(userId),
             fetchRecentMessages(channel).catch((e) => {
               console.error("Failed to fetch recent messages:", e);
               return [];
             }),
+            fetchChannelRewards(channel),
           ]);
-          port.postMessage({ type: "channel-data", badges, emotes, settings });
+          port.postMessage({ type: "channel-data", badges, emotes, rewards, settings });
           if (recentMessages.length) {
             port.postMessage({ type: "recent-messages", messages: recentMessages });
           }
@@ -456,6 +475,7 @@ chrome.runtime.onConnect.addListener((port) => {
     if (msg.type === "send-message") {
       sendMessage(msg.channel, msg.text, msg.replyParentMsgId);
     }
+
 
     if (msg.type === "get-user-profile") {
       if (!currentAccount) {

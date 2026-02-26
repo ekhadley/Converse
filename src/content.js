@@ -33,6 +33,7 @@ let pauseBar = null;
 let settingsPanel = null;
 let scrollThumb = null;
 let userColors = {}; // username -> color from Twitch IRC tags
+let channelRewards = {}; // reward id -> title from GQL
 let mentionRe = null; // cached regex for @mention highlighting
 let pendingMysteryGifts = {}; // username -> { remaining, namesEl }
 let vodId = null;
@@ -83,6 +84,12 @@ function getVodId() {
 function connectPort() {
   port = chrome.runtime.connect({ name: "chat" });
 
+  // Keepalive: MV3 service workers die after 30s of no extension events.
+  // VOD pages send vod-time every 500ms, but live channels send nothing
+  // after the initial channel-changed — so the worker can be terminated,
+  // killing the IRC WebSocket. This ping keeps it alive.
+  setInterval(() => { try { port.postMessage({ type: "keepalive" }); } catch {} }, 25000);
+
   port.onMessage.addListener((msg) => {
     if (msg.type === "irc-message") handleIRCMessage(msg.data);
     if (msg.type === "recent-messages") {
@@ -91,6 +98,7 @@ function connectPort() {
     if (msg.type === "channel-data") {
       badges = msg.badges || {};
       thirdPartyEmotes = msg.emotes || {};
+      channelRewards = msg.rewards || {};
       if (msg.settings) applySettings(msg.settings);
     }
     if (msg.type === "account-info") {
@@ -931,6 +939,15 @@ function buildMessageLine(msg, even, opts = {}) {
     line.classList.add("cvs-line-reply");
   }
 
+  // Redeem label
+  const rewardId = msg.tags?.["custom-reward-id"];
+  if (rewardId) {
+    const redeemBar = document.createElement("div");
+    redeemBar.className = "cvs-redeem-bar";
+    redeemBar.textContent = channelRewards[rewardId] || "Channel Point Redeem";
+    line.appendChild(redeemBar);
+  }
+
   // Timestamp
   const ts = makeSystemTimestamp(msg);
   if (ts) line.appendChild(ts);
@@ -1306,17 +1323,6 @@ function updateAutocomplete() {
     acMode = "emote";
     acTokenStart = start;
     const query = token.slice(1).toLowerCase();
-    const results = [];
-    for (const [name, emote] of Object.entries(thirdPartyEmotes)) {
-      if (!isProviderEnabled(emote.provider)) continue;
-      if (name.toLowerCase().includes(query)) results.push({ name, emote, isPrefix: name.toLowerCase().startsWith(query) });
-    }
-    results.sort((a, b) => { if (a.isPrefix !== b.isPrefix) return a.isPrefix ? -1 : 1; return a.name.length - b.name.length; });
-    renderAcItems(results.slice(0, 15));
-  } else if (token.length >= 2 && !token.startsWith("@")) {
-    acMode = "emote";
-    acTokenStart = start;
-    const query = token.toLowerCase();
     const results = [];
     for (const [name, emote] of Object.entries(thirdPartyEmotes)) {
       if (!isProviderEnabled(emote.provider)) continue;

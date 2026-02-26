@@ -89,6 +89,9 @@ Uses `msg.tags.color` if present, falls back to `userColors` map (populated from
 ### Channel Points Counter
 Displays the user's channel points balance to the right of the chat input, inside a `.cvs-input-row` flex wrapper. Read directly from Twitch's native `.community-points-summary` DOM element (hidden by our CSS but still live in the DOM). Polled every 3s via `pollChannelPoints()`. Shows a channel points icon (SVG) + formatted balance (e.g. "333.9K"). Hidden on VOD pages, when no channel is active, or when the native element isn't present (channel has no points program). No GQL or background involvement — purely content script DOM scraping.
 
+### Channel Point Redeems
+Messages with the `custom-reward-id` IRC tag are channel point redeems. The reward ID is a UUID with no name attached. On channel join, `fetchChannelRewards(channelLogin)` calls the `ChannelPointsContext` GQL operation (no auth required) to fetch `communityPointsSettings.customRewards`, building a `rewardId → title` map sent to the content script as part of `channel-data`. In `buildMessageLine`, redeems render a `.cvs-redeem-bar` label above the message body showing the reward title (or "Channel Point Redeem" as fallback). The GQL persisted query hash is volatile — Twitch may rotate it.
+
 ### @Mention Highlighting
 Words starting with `@` followed by a valid username pattern are rendered as `.cvs-mention` spans — bold, colored (using the mentioned user's color from `userColors` or hash fallback), and clickable (opens usercard). Messages that mention the logged-in user get a `.cvs-line-mention` class: purple-tinted background with a left border accent.
 
@@ -266,7 +269,8 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [ ] First message highlights — visually highlight a user's first message in the channel
 - [x] Channel points counter — display current channel points balance
 - [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
-- [ ] Channel point redeems. Currently only show up as normal messages.
+- [x] Channel point redeems — redeem title shown via GQL `ChannelPointsContext` (reward id→title map fetched on channel join)
+- [ ] Channel points counter via GQL — revisit DOM scraping approach; `ChannelPointsContext` also returns `self.communityPoints.balance` (requires auth token), which would be more reliable than polling the native DOM element
 - [ ] Channel points menu — click points counter to open rewards menu for redeeming
 - [ ] Predictions — display and interact with channel predictions
 - [ ] Polls — display and interact with channel polls
