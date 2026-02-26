@@ -19,9 +19,11 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 
 ### Communication
 Content script connects a long-lived port (`name: "chat"`) to the background service worker. On port disconnect (e.g. service worker restart), the content script reconnects and re-sends `channel-changed` to restore state. `broadcast()` in background auto-prunes dead ports. Messages:
-- **content -> background (port):** `channel-changed`, `send-message`, `get-user-profile`, `vod-changed`, `vod-time`, `vod-seek`
+- **content -> background (port):** `channel-changed`, `send-message`, `get-user-profile`, `vod-changed`, `vod-time`, `vod-seek`, `keepalive`
 - **background -> content (port):** `irc-message`, `recent-messages`, `channel-data` (badges + emotes + settings), `account-info`, `user-profile`, `vod-channel-data`, `vod-comments`
 - **content -> background (runtime message):** `open-extensions`, `reload-extension`
+
+**Service worker keepalive:** MV3 service workers terminate after 30s of no extension API events. WebSocket `onmessage` and `setInterval` callbacks with delays ≥30s do NOT count as extension events. VOD pages are immune (content script sends `vod-time` every 500ms), but live channels sent nothing after the initial `channel-changed`, so the worker would die and kill the IRC WebSocket. The content script now sends a `keepalive` port message every 25s (under Chrome's 30s threshold) to prevent this. The background has no handler for it — the port message event itself resets Chrome's idle timer.
 
 Settings changes propagate via `chrome.storage.onChanged` listener in content script. Content script cannot call `chrome.tabs.create()` or `chrome.runtime.reload()` directly — these are proxied through runtime messages to the background script.
 
@@ -64,7 +66,7 @@ Static input at the bottom of the chat column. Styled as a rounded box with a su
 ### Autocomplete
 A single `div.cvs-autocomplete` dropdown positioned above the input, shared by emote and username completion.
 
-**Emote autocomplete:** Triggered by typing `:` + 1 char, or any 2+ char word not starting with `@`. Case-insensitive substring match against `thirdPartyEmotes` (filtered by enabled providers). Prefix matches sort first, then shorter names. Shows emote image + name + provider label. Capped at 15 results.
+**Emote autocomplete:** Triggered by typing `:` + 1 char. Case-insensitive substring match against `thirdPartyEmotes` (filtered by enabled providers). Prefix matches sort first, then shorter names. Shows emote image + name + provider label. Capped at 15 results.
 
 **Username autocomplete:** Triggered by `@` + 1 char. Prefix match against `messageBuffer` (recent chatters first, deduplicated). Channel owner always included as a candidate with broadcaster badge. Shows user badges + display name colored with their chat color. Capped at 10 results.
 
