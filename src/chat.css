@@ -69,6 +69,11 @@
   background: rgba(255, 255, 255, 0.35);
 }
 
+.cvs-messages.cvs-quickscroll {
+  cursor: all-scroll !important;
+  user-select: none;
+}
+
 .cvs-line {
   position: relative;
   padding: var(--cvs-msg-spacing, 2px) 8px;
@@ -136,15 +141,23 @@
   font-size: 0.95em;
 }
 
+.cvs-event-bar {
+  font-size: 0.85em;
+  color: #898395;
+  padding-bottom: 2px;
+}
+
 .cvs-line-sub {
   border-left: 2px solid #d4a827;
   background: rgba(212, 168, 39, 0.08) !important;
 }
+.cvs-line-sub .cvs-event-bar { color: #d4a827; }
 
 .cvs-line-raid {
   border-left: 2px solid #4a90d9;
   background: rgba(74, 144, 217, 0.08) !important;
 }
+.cvs-line-raid .cvs-event-bar { color: #4a90d9; }
 
 .cvs-line-redeem {
   border-left: 2px solid #9147ff;
@@ -156,10 +169,13 @@
   padding-bottom: 2px;
 }
 
-.cvs-system-body {
-  display: block;
-  color: #efeff1;
-  padding-top: 2px;
+.cvs-line-deleted {
+  opacity: 0.5;
+}
+.cvs-deleted-bar {
+  font-size: 0.85em;
+  color: #898395;
+  padding-bottom: 2px;
 }
 
 /* --- Mentions --- */

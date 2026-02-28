@@ -26,7 +26,6 @@ let chatCollapsed = false;
 let extensionEnabled = true;
 let chatContainer = null;
 let messageList = null;
-let msgEven = false;
 let inputEl = null;
 let inputOverlay = null;
 let pauseBar = null;
@@ -36,6 +35,7 @@ let userColors = {}; // username -> color from Twitch IRC tags
 let channelRewards = {}; // reward id -> title from GQL
 let mentionRe = null; // cached regex for @mention highlighting
 let pendingMysteryGifts = {}; // username -> { remaining, namesEl }
+let middleScrollRAF = null; // rAF id for middle-click drag scrolling
 let vodId = null;
 let vodChannel = null;
 let vodPollTimer = null;
@@ -333,6 +333,7 @@ function buildChatUI(shell) {
     messageList.scrollTop = ratio * (messageList.scrollHeight - messageList.clientHeight);
   });
   messageList.addEventListener("scroll", updateScrollbar);
+  messageList.addEventListener("mousedown", (e) => { if (e.button === 1) startMiddleScrollDrag(e); });
 
   // Settings gear button + full settings panel
   const settingsBtn = document.createElement("button");
@@ -637,6 +638,29 @@ function startScrollDrag(e) {
   document.addEventListener("mouseup", onUp);
 }
 
+function startMiddleScrollDrag(e) {
+  e.preventDefault();
+  const anchorY = e.clientY;
+  let deltaY = 0;
+  messageList.classList.add("cvs-quickscroll");
+  function tick() {
+    if (deltaY !== 0) messageList.scrollTop += deltaY * 0.2;
+    middleScrollRAF = requestAnimationFrame(tick);
+  }
+  middleScrollRAF = requestAnimationFrame(tick);
+  function onMove(e) { deltaY = e.clientY - anchorY; }
+  function onUp(e) {
+    if (e.button !== 1) return;
+    cancelAnimationFrame(middleScrollRAF);
+    middleScrollRAF = null;
+    messageList.classList.remove("cvs-quickscroll");
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  }
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
 // --- Resize ---
 // We inject a single <style> element with !important overrides to resize the chat,
 // player, and info panel. Theatre and normal modes have different Twitch layouts:
@@ -870,10 +894,10 @@ function openThread(rootId) {
   currentThread = { rootId };
   threadMsgList.innerHTML = "";
   const msgs = messageBuffer.filter(m => m.tags?.id === rootId || m.tags?.["reply-thread-parent-msg-id"] === rootId || m.tags?.["reply-parent-msg-id"] === rootId);
-  let even = false;
-  for (const m of msgs) {
-    threadMsgList.appendChild(buildMessageLine(m, even, { skipReplyBar: true }));
-    even = !even;
+  for (let i = 0; i < msgs.length; i++) {
+    const line = buildMessageLine(msgs[i], { skipReplyBar: true });
+    if (i % 2 === 1) line.classList.add("cvs-line-even");
+    threadMsgList.appendChild(line);
   }
   threadPanel.classList.remove("cvs-hidden");
   threadPanel.style.height = `${threadHeightRatio * 100}%`;
@@ -892,9 +916,10 @@ function closeThread() {
 
 function appendThreadMessage(msg) {
   if (!threadMsgList) return;
-  const even = threadMsgList.childElementCount % 2 === 1;
   const atBottom = threadMsgList.scrollHeight - threadMsgList.scrollTop - threadMsgList.clientHeight < 30;
-  threadMsgList.appendChild(buildMessageLine(msg, even, { skipReplyBar: true }));
+  const line = buildMessageLine(msg, { skipReplyBar: true });
+  if (threadMsgList.childElementCount % 2 === 1) line.classList.add("cvs-line-even");
+  threadMsgList.appendChild(line);
   while (threadMsgList.childElementCount > settings.messageCap) threadMsgList.firstElementChild.remove();
   if (atBottom) threadMsgList.scrollTop = threadMsgList.scrollHeight;
 }
@@ -918,9 +943,9 @@ function startThreadResize(e) {
 }
 
 // --- Build a PRIVMSG line element ---
-function buildMessageLine(msg, even, opts = {}) {
+function buildMessageLine(msg, opts = {}) {
   const line = document.createElement("div");
-  line.className = "cvs-line" + (even ? " cvs-line-even" : "") + (msg.tags?.["custom-reward-id"] ? " cvs-line-redeem" : "");
+  line.className = "cvs-line" + (msg.tags?.["custom-reward-id"] ? " cvs-line-redeem" : "");
   line.dataset.user = msg.username;
   if (msg.tags?.id) line.dataset.msgId = msg.tags.id;
 
@@ -1023,6 +1048,44 @@ function buildMessageLine(msg, even, opts = {}) {
   return line;
 }
 
+function appendEventUserLine(line, msg, body) {
+  const ts = makeSystemTimestamp(msg);
+  if (ts) line.appendChild(ts);
+  if (settings.showBadges && msg.tags?.badges) {
+    for (const badge of msg.tags.badges.split(",")) {
+      if (!badge) continue;
+      const url = badges[badge];
+      if (url) {
+        const img = document.createElement("img");
+        img.className = "cvs-badge";
+        img.src = url;
+        img.alt = badge.split("/")[0];
+        line.appendChild(img);
+      }
+    }
+  }
+  const tagColor = msg.tags?.color;
+  const readable = tagColor && isColorReadable(tagColor);
+  if (readable) userColors[msg.username] = tagColor;
+  const userSpan = document.createElement("span");
+  userSpan.className = "cvs-user";
+  const displayName = msg.username === "ananonymousgifter" ? "Anonymous" : (msg.tags?.["display-name"] || msg.username);
+  userSpan.textContent = displayName;
+  const color = (readable ? tagColor : null) || userColors[msg.username] || hashColor(msg.username);
+  userSpan.style.color = color;
+  line.appendChild(userSpan);
+  if (body) {
+    const sep = document.createElement("span");
+    sep.className = "cvs-sep";
+    sep.textContent = ": ";
+    line.appendChild(sep);
+    const bodySpan = document.createElement("span");
+    bodySpan.className = "cvs-body";
+    renderMessageBody(bodySpan, body, msg.tags?.emotes);
+    line.appendChild(bodySpan);
+  }
+}
+
 // --- IRC message rendering ---
 function formatSubTier(plan) {
   if (plan === "2000") return "Tier 2";
@@ -1047,15 +1110,33 @@ function makeSystemTimestamp(msg) {
   return ts;
 }
 
+function markDeleted(el, label = "Deleted by a mod") {
+  if (el.classList.contains("cvs-line-deleted")) return;
+  el.classList.add("cvs-line-deleted");
+  const bar = document.createElement("div");
+  bar.className = "cvs-deleted-bar";
+  bar.textContent = label;
+  el.prepend(bar);
+}
+
+function formatBanDuration(s) {
+  s = parseInt(s);
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+}
+
 function handleIRCMessage(msg) {
   if (!messageList) return;
 
   if (msg.command === "CLEARCHAT") {
     if (msg.trailing) {
-      // Clear specific user (both rendered and pending)
-      pendingLines = pendingLines.filter(l => l.dataset.user !== msg.trailing);
-      const els = messageList.querySelectorAll(`[data-user="${msg.trailing}"]`);
-      for (const el of els) el.remove();
+      const dur = msg.tags?.["ban-duration"];
+      const label = dur ? `Timed out (${formatBanDuration(dur)})` : "Banned";
+      for (const l of pendingLines) { if (l.dataset.user === msg.trailing) markDeleted(l, label); }
+      const els = chatContainer.querySelectorAll(`[data-user="${msg.trailing}"]`);
+      for (const el of els) markDeleted(el, label);
     } else {
       pendingLines = [];
       messageList.innerHTML = "";
@@ -1067,35 +1148,35 @@ function handleIRCMessage(msg) {
   if (msg.command === "CLEARMSG") {
     const targetId = msg.tags?.["target-msg-id"];
     if (targetId) {
-      pendingLines = pendingLines.filter(l => l.dataset.msgId !== targetId);
-      const el = messageList.querySelector(`[data-msg-id="${targetId}"]`);
-      if (el) el.remove();
+      for (const l of pendingLines) { if (l.dataset.msgId === targetId) markDeleted(l); }
+      const el = chatContainer.querySelector(`[data-msg-id="${targetId}"]`);
+      if (el) markDeleted(el);
     }
     updateScrollbar();
     return;
   }
 
-  // --- Gift sub events ---
+  // --- Sub / gift / raid event lines ---
   if (msg.command === "USERNOTICE") {
     if (msg.channel !== currentChannel && msg.channel !== vodChannel) return;
     const noticeId = msg.tags?.["msg-id"];
-    const gifter = msg.username === "ananonymousgifter" ? "Anonymous" : (msg.tags?.["display-name"] || msg.username);
+    const displayName = msg.tags?.["display-name"] || msg.username;
     const tier = formatSubTier(msg.tags?.["msg-param-sub-plan"]);
 
     if (noticeId === "submysterygift") {
       const count = parseInt(msg.tags?.["msg-param-mass-gift-count"]) || 0;
       const line = document.createElement("div");
-      line.className = "cvs-line cvs-line-system" + (msgEven ? " cvs-line-even" : "");
-      msgEven = !msgEven;
-      const ts = makeSystemTimestamp(msg);
-      if (ts) line.appendChild(ts);
-      const text = document.createElement("span");
-      text.textContent = `${gifter} is gifting ${count} ${tier} sub${count !== 1 ? "s" : ""}!`;
-      line.appendChild(text);
+      line.className = "cvs-line cvs-line-sub";
+      line.dataset.user = msg.username;
+      const eventBar = document.createElement("div");
+      eventBar.className = "cvs-event-bar";
+      eventBar.textContent = `Gifting ${count} ${tier} sub${count !== 1 ? "s" : ""}!`;
       const toggle = document.createElement("span");
       toggle.className = "cvs-gift-toggle";
       toggle.textContent = "\u25B8";
-      line.appendChild(toggle);
+      eventBar.appendChild(toggle);
+      line.appendChild(eventBar);
+      appendEventUserLine(line, msg);
       const names = document.createElement("div");
       names.className = "cvs-gift-names cvs-hidden";
       line.appendChild(names);
@@ -1112,7 +1193,6 @@ function handleIRCMessage(msg) {
 
     if (noticeId === "subgift" || noticeId === "anonsubgift") {
       const recipient = msg.tags?.["msg-param-recipient-display-name"] || msg.tags?.["msg-param-recipient-user-name"] || "someone";
-      // Collect into mystery gift dropdown if part of a bulk gift
       const pending = pendingMysteryGifts[msg.username];
       if (pending && pending.remaining > 0) {
         const nameEl = document.createElement("div");
@@ -1123,15 +1203,14 @@ function handleIRCMessage(msg) {
         if (autoScroll) scrollIfNeeded();
         return;
       }
-      // Standalone gift sub
       const line = document.createElement("div");
-      line.className = "cvs-line cvs-line-system" + (msgEven ? " cvs-line-even" : "");
-      msgEven = !msgEven;
-      const ts = makeSystemTimestamp(msg);
-      if (ts) line.appendChild(ts);
-      const text = document.createElement("span");
-      text.textContent = `${gifter} gifted a ${tier} sub to ${recipient}`;
-      line.appendChild(text);
+      line.className = "cvs-line cvs-line-sub";
+      line.dataset.user = msg.username;
+      const eventBar = document.createElement("div");
+      eventBar.className = "cvs-event-bar";
+      eventBar.textContent = `Gifted a ${tier} sub to ${recipient}`;
+      line.appendChild(eventBar);
+      appendEventUserLine(line, msg);
       queueLine(line);
       return;
     }
@@ -1144,21 +1223,18 @@ function handleIRCMessage(msg) {
     const accentClass = (noticeId === "sub" || noticeId === "resub" || noticeId === "giftpaidupgrade" || noticeId === "anongiftpaidupgrade" || noticeId === "bitsbadgetier")
       ? " cvs-line-sub"
       : noticeId === "raid" ? " cvs-line-raid" : "";
-    line.className = "cvs-line cvs-line-system" + accentClass + (msgEven ? " cvs-line-even" : "");
-    msgEven = !msgEven;
-    const ts = makeSystemTimestamp(msg);
-    if (ts) line.appendChild(ts);
-    const text = document.createElement("span");
-    text.textContent = sysMsg;
-    line.appendChild(text);
-
-    if (msg.trailing) {
-      const body = document.createElement("span");
-      body.className = "cvs-system-body";
-      renderMessageBody(body, msg.trailing, msg.tags?.emotes);
-      line.appendChild(body);
+    line.className = "cvs-line" + accentClass;
+    line.dataset.user = msg.username;
+    const eventBar = document.createElement("div");
+    eventBar.className = "cvs-event-bar";
+    let eventText = sysMsg;
+    if (eventText.startsWith(displayName + " ")) {
+      eventText = eventText.slice(displayName.length + 1);
+      eventText = eventText.charAt(0).toUpperCase() + eventText.slice(1);
     }
-
+    eventBar.textContent = eventText;
+    line.appendChild(eventBar);
+    appendEventUserLine(line, msg, msg.trailing);
     queueLine(line);
     return;
   }
@@ -1178,8 +1254,7 @@ function handleIRCMessage(msg) {
   messageBuffer.push(msg);
   if (messageBuffer.length > settings.messageCap) messageBuffer.shift();
 
-  const line = buildMessageLine(msg, msgEven);
-  msgEven = !msgEven;
+  const line = buildMessageLine(msg);
 
   queueLine(line);
 
@@ -1528,8 +1603,13 @@ function queueLine(line) {
 function flushMessages() {
   flushScheduled = false;
   if (!pendingLines.length || !messageList) return;
+  let idx = messageList.childElementCount;
   const frag = document.createDocumentFragment();
-  for (const line of pendingLines) frag.appendChild(line);
+  for (const line of pendingLines) {
+    if (idx % 2 === 1) line.classList.add("cvs-line-even");
+    frag.appendChild(line);
+    idx++;
+  }
   pendingLines = [];
   messageList.appendChild(frag);
   pruneMessages();
@@ -1592,7 +1672,7 @@ function openUsercard(username, clickEvent) {
     for (let i = 0; i < userMsgs.length; i++) {
       const m = userMsgs[i];
       const row = document.createElement("div");
-      row.className = "cvs-line" + (i % 2 ? " cvs-line-even" : "");
+      row.className = "cvs-line" + (i % 2 === 1 ? " cvs-line-even" : "");
 
       const ts = document.createElement("span");
       ts.className = "cvs-ts";
@@ -1724,7 +1804,6 @@ function startVodPoll() {
       pendingMysteryGifts = {};
       exitReplyMode();
       closeThread();
-      msgEven = false;
       port.postMessage({ type: "vod-seek", videoId: vodId, offset });
     } else {
       port.postMessage({ type: "vod-time", videoId: vodId, offset });
