@@ -76,11 +76,12 @@ A single `div.cvs-autocomplete` dropdown positioned above the input, shared by e
 Sent messages are pushed to an in-memory `inputHistory` array (capped at 50). Up arrow cycles backwards through history, Down arrow cycles forwards. Current input is saved/restored when entering/exiting history. Any typing resets the history index.
 
 ### Message Moderation
-- `CLEARCHAT` with trailing: removes all messages from that user. Without trailing: clears entire chat.
-- `CLEARMSG`: removes single message by `target-msg-id` tag.
+- `CLEARCHAT` with trailing: marks all messages from that user as deleted (`cvs-line-deleted` class — reduced opacity + label showing "Banned" or "Timed out (duration)"). Without trailing: clears entire chat.
+- `CLEARMSG`: marks single message as deleted by `target-msg-id` tag ("Deleted by a mod" label).
+- `markDeleted(el, label)` prepends a `.cvs-deleted-bar` label and adds `.cvs-line-deleted` (idempotent). Messages stay in the DOM rather than being removed.
 
 ### Alternating Row Colors
-Messages alternate odd/even backgrounds via `cvs-line-even` class. Colors set via CSS custom properties `--cvs-bg-odd` / `--cvs-bg-even`, configurable in popup settings.
+Messages alternate odd/even backgrounds via `cvs-line-even` class, assigned once at insertion time in `flushMessages()` by chaining off the last child's actual class. The class is never re-indexed. Pruning is deferred while `autoScroll` is false (chat paused) to prevent DOM removals above the viewport from shifting scroll position; the backlog is pruned on `resumeScroll()`. Colors set via CSS custom properties `--cvs-bg-odd` / `--cvs-bg-even`, configurable in popup settings.
 
 ### Username Colors
 Uses `msg.tags.color` if present, falls back to `userColors` map (populated from previous messages by that user), then generates a deterministic HSL color from a hash of the username. The `userColors` map persists across channel switches since Twitch colors are global. This ensures local echo messages and @mentions use the user's real Twitch color.
