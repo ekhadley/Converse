@@ -640,6 +640,7 @@ function startScrollDrag(e) {
 }
 
 function startMiddleScrollDrag(e) {
+  if (middleScrollRAF) return;
   e.preventDefault();
   const anchorY = e.clientY;
   let deltaY = 0;
@@ -969,44 +970,12 @@ function buildMessageLine(msg, opts = {}) {
   const rewardId = msg.tags?.["custom-reward-id"];
   if (rewardId) {
     const redeemBar = document.createElement("div");
-    redeemBar.className = "cvs-redeem-bar";
+    redeemBar.className = "cvs-meta-bar";
     redeemBar.textContent = channelRewards[rewardId] || "Channel Point Redeem";
     line.appendChild(redeemBar);
   }
 
-  // Timestamp
-  const ts = makeSystemTimestamp(msg);
-  if (ts) line.appendChild(ts);
-
-  // Badges
-  if (settings.showBadges && msg.tags?.badges) {
-    const badgeStr = msg.tags.badges;
-    for (const badge of badgeStr.split(",")) {
-      if (!badge) continue;
-      const url = badges[badge];
-      if (url) {
-        const img = document.createElement("img");
-        img.className = "cvs-badge";
-        img.src = url;
-        img.alt = badge.split("/")[0];
-        line.appendChild(img);
-      }
-    }
-  }
-
-  // Track user color from IRC tags (skip unreadable dark colors)
-  const tagColor = msg.tags?.color;
-  const readable = tagColor && isColorReadable(tagColor);
-  if (readable) userColors[msg.username] = tagColor;
-
-  // Username
-  const userSpan = document.createElement("span");
-  userSpan.className = "cvs-user";
-  const displayName = msg.tags?.["display-name"] || msg.username;
-  userSpan.textContent = displayName;
-  const color = (readable ? tagColor : null) || userColors[msg.username] || hashColor(msg.username);
-  userSpan.style.color = color;
-  line.appendChild(userSpan);
+  appendUserChrome(line, msg);
 
   // Separator
   const sep = document.createElement("span");
@@ -1049,9 +1018,9 @@ function buildMessageLine(msg, opts = {}) {
   return line;
 }
 
-function appendEventUserLine(line, msg, body) {
+function appendUserChrome(el, msg) {
   const ts = makeSystemTimestamp(msg);
-  if (ts) line.appendChild(ts);
+  if (ts) el.appendChild(ts);
   if (settings.showBadges && msg.tags?.badges) {
     for (const badge of msg.tags.badges.split(",")) {
       if (!badge) continue;
@@ -1061,7 +1030,7 @@ function appendEventUserLine(line, msg, body) {
         img.className = "cvs-badge";
         img.src = url;
         img.alt = badge.split("/")[0];
-        line.appendChild(img);
+        el.appendChild(img);
       }
     }
   }
@@ -1074,7 +1043,11 @@ function appendEventUserLine(line, msg, body) {
   userSpan.textContent = displayName;
   const color = (readable ? tagColor : null) || userColors[msg.username] || hashColor(msg.username);
   userSpan.style.color = color;
-  line.appendChild(userSpan);
+  el.appendChild(userSpan);
+}
+
+function appendEventUserLine(line, msg, body) {
+  appendUserChrome(line, msg);
   if (body) {
     const sep = document.createElement("span");
     sep.className = "cvs-sep";
@@ -1115,7 +1088,7 @@ function markDeleted(el, label = "Deleted by a mod") {
   if (el.classList.contains("cvs-line-deleted")) return;
   el.classList.add("cvs-line-deleted");
   const bar = document.createElement("div");
-  bar.className = "cvs-deleted-bar";
+  bar.className = "cvs-meta-bar";
   bar.textContent = label;
   el.prepend(bar);
 }
@@ -1136,7 +1109,7 @@ function handleIRCMessage(msg) {
       const dur = msg.tags?.["ban-duration"];
       const label = dur ? `Timed out (${formatBanDuration(dur)})` : "Banned";
       for (const l of pendingLines) { if (l.dataset.user === msg.trailing) markDeleted(l, label); }
-      const els = chatContainer.querySelectorAll(`[data-user="${msg.trailing}"]`);
+      const els = chatContainer.querySelectorAll(`.cvs-line[data-user="${msg.trailing}"]`);
       for (const el of els) markDeleted(el, label);
     } else {
       pendingLines = [];
@@ -1150,7 +1123,7 @@ function handleIRCMessage(msg) {
     const targetId = msg.tags?.["target-msg-id"];
     if (targetId) {
       for (const l of pendingLines) { if (l.dataset.msgId === targetId) markDeleted(l); }
-      const el = chatContainer.querySelector(`[data-msg-id="${targetId}"]`);
+      const el = chatContainer.querySelector(`.cvs-line[data-msg-id="${targetId}"]`);
       if (el) markDeleted(el);
     }
     updateScrollbar();
@@ -1170,7 +1143,7 @@ function handleIRCMessage(msg) {
       line.className = "cvs-line cvs-line-sub";
       line.dataset.user = msg.username;
       const eventBar = document.createElement("div");
-      eventBar.className = "cvs-event-bar";
+      eventBar.className = "cvs-meta-bar";
       eventBar.textContent = `Gifting ${count} ${tier} sub${count !== 1 ? "s" : ""}!`;
       const toggle = document.createElement("span");
       toggle.className = "cvs-gift-toggle";
@@ -1208,7 +1181,7 @@ function handleIRCMessage(msg) {
       line.className = "cvs-line cvs-line-sub";
       line.dataset.user = msg.username;
       const eventBar = document.createElement("div");
-      eventBar.className = "cvs-event-bar";
+      eventBar.className = "cvs-meta-bar";
       eventBar.textContent = `Gifted a ${tier} sub to ${recipient}`;
       line.appendChild(eventBar);
       appendEventUserLine(line, msg);
@@ -1227,7 +1200,7 @@ function handleIRCMessage(msg) {
     line.className = "cvs-line" + accentClass;
     line.dataset.user = msg.username;
     const eventBar = document.createElement("div");
-    eventBar.className = "cvs-event-bar";
+    eventBar.className = "cvs-meta-bar";
     let eventText = sysMsg;
     if (eventText.startsWith(displayName + " ")) {
       eventText = eventText.slice(displayName.length + 1);

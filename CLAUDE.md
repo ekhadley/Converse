@@ -78,7 +78,7 @@ Sent messages are pushed to an in-memory `inputHistory` array (capped at 50). Up
 ### Message Moderation
 - `CLEARCHAT` with trailing: marks all messages from that user as deleted (`cvs-line-deleted` class — reduced opacity + label showing "Banned" or "Timed out (duration)"). Without trailing: clears entire chat.
 - `CLEARMSG`: marks single message as deleted by `target-msg-id` tag ("Deleted by a mod" label).
-- `markDeleted(el, label)` prepends a `.cvs-deleted-bar` label and adds `.cvs-line-deleted` (idempotent). Messages stay in the DOM rather than being removed.
+- `markDeleted(el, label)` prepends a `.cvs-meta-bar` label and adds `.cvs-line-deleted` (idempotent). Messages stay in the DOM rather than being removed.
 
 ### Alternating Row Colors
 Messages alternate odd/even backgrounds via `cvs-line-even` class, assigned once at insertion time in `flushMessages()` by chaining off the last child's actual class. The class is never re-indexed. Pruning is deferred while `autoScroll` is false (chat paused) to prevent DOM removals above the viewport from shifting scroll position; the backlog is pruned on `resumeScroll()`. Colors set via CSS custom properties `--cvs-bg-odd` / `--cvs-bg-even`, configurable in popup settings.
@@ -93,7 +93,7 @@ Uses `msg.tags.color` if present, falls back to `userColors` map (populated from
 Displays the user's channel points balance to the right of the chat input, inside a `.cvs-input-row` flex wrapper. Read directly from Twitch's native `.community-points-summary` DOM element (hidden by our CSS but still live in the DOM). Polled every 3s via `pollChannelPoints()`. Shows a channel points icon (SVG) + formatted balance (e.g. "333.9K"). Hidden on VOD pages, when no channel is active, or when the native element isn't present (channel has no points program). No GQL or background involvement — purely content script DOM scraping.
 
 ### Channel Point Redeems
-Messages with the `custom-reward-id` IRC tag are channel point redeems. The reward ID is a UUID with no name attached. On channel join, `fetchChannelRewards(channelLogin)` calls the `ChannelPointsContext` GQL operation (no auth required) to fetch `communityPointsSettings.customRewards`, building a `rewardId → title` map sent to the content script as part of `channel-data`. In `buildMessageLine`, redeems render a `.cvs-redeem-bar` label above the message body showing the reward title (or "Channel Point Redeem" as fallback). The GQL persisted query hash is volatile — Twitch may rotate it.
+Messages with the `custom-reward-id` IRC tag are channel point redeems. The reward ID is a UUID with no name attached. On channel join, `fetchChannelRewards(channelLogin)` calls the `ChannelPointsContext` GQL operation (no auth required) to fetch `communityPointsSettings.customRewards`, building a `rewardId → title` map sent to the content script as part of `channel-data`. In `buildMessageLine`, redeems render a `.cvs-meta-bar` label above the message body showing the reward title (or "Channel Point Redeem" as fallback). The GQL persisted query hash is volatile — Twitch may rotate it.
 
 ### @Mention Highlighting
 Words starting with `@` followed by a valid username pattern are rendered as `.cvs-mention` spans — bold, colored (using the mentioned user's color from `userColors` or hash fallback), and clickable (opens usercard). Messages that mention the logged-in user get a `.cvs-line-mention` class: purple-tinted background with a left border accent.

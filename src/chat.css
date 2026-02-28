@@ -141,7 +141,7 @@
   font-size: 0.95em;
 }
 
-.cvs-event-bar {
+.cvs-meta-bar {
   font-size: 0.85em;
   color: #898395;
   padding-bottom: 2px;
@@ -151,31 +151,22 @@
   border-left: 2px solid #d4a827;
   background: rgba(212, 168, 39, 0.08) !important;
 }
-.cvs-line-sub .cvs-event-bar { color: #d4a827; }
+.cvs-line-sub .cvs-meta-bar { color: #d4a827; }
 
 .cvs-line-raid {
   border-left: 2px solid #4a90d9;
   background: rgba(74, 144, 217, 0.08) !important;
 }
-.cvs-line-raid .cvs-event-bar { color: #4a90d9; }
+.cvs-line-raid .cvs-meta-bar { color: #4a90d9; }
 
 .cvs-line-redeem {
   border-left: 2px solid #9147ff;
   background: rgba(145, 71, 255, 0.08) !important;
 }
-.cvs-redeem-bar {
-  font-size: 0.85em;
-  color: #9147ff;
-  padding-bottom: 2px;
-}
+.cvs-line-redeem .cvs-meta-bar { color: #9147ff; }
 
 .cvs-line-deleted {
   opacity: 0.5;
-}
-.cvs-deleted-bar {
-  font-size: 0.85em;
-  color: #898395;
-  padding-bottom: 2px;
 }
 
 /* --- Mentions --- */
