@@ -588,6 +588,7 @@ function onScroll() {
 function resumeScroll() {
   autoScroll = true;
   pauseBar.classList.add("cvs-hidden");
+  pruneMessages();
   messageList.scrollTop = messageList.scrollHeight;
 }
 
@@ -1603,16 +1604,16 @@ function queueLine(line) {
 function flushMessages() {
   flushScheduled = false;
   if (!pendingLines.length || !messageList) return;
-  let idx = messageList.childElementCount;
+  let even = messageList.lastElementChild?.classList.contains("cvs-line-even") ?? true;
   const frag = document.createDocumentFragment();
   for (const line of pendingLines) {
-    if (idx % 2 === 1) line.classList.add("cvs-line-even");
+    even = !even;
+    if (even) line.classList.add("cvs-line-even");
     frag.appendChild(line);
-    idx++;
   }
   pendingLines = [];
   messageList.appendChild(frag);
-  pruneMessages();
+  if (autoScroll) pruneMessages();
   scrollIfNeeded();
   updateScrollbar();
 }
