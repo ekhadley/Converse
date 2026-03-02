@@ -219,12 +219,16 @@ function buildChatUI(shell) {
   messageList.addEventListener("mouseover", (e) => {
     if (tooltipLocked) return;
     const emote = e.target.closest(".cvs-emote");
-    if (emote) { showTooltip(emote); tooltipLocked = true; }
+    if (emote) { showTooltip(emote); tooltipLocked = true; return; }
+    const badge = e.target.closest(".cvs-badge");
+    if (badge) { showBadgeTooltip(badge); tooltipLocked = true; }
   });
   messageList.addEventListener("mousemove", (e) => {
     tooltipLocked = false;
     const emote = e.target.closest(".cvs-emote");
-    if (emote) showTooltip(emote);
+    if (emote) { showTooltip(emote); return; }
+    const badge = e.target.closest(".cvs-badge");
+    if (badge) showBadgeTooltip(badge);
     else hideTooltip();
   });
   messageList.addEventListener("mouseleave", hideTooltip);
@@ -1024,12 +1028,13 @@ function appendUserChrome(el, msg) {
   if (settings.showBadges && msg.tags?.badges) {
     for (const badge of msg.tags.badges.split(",")) {
       if (!badge) continue;
-      const url = badges[badge];
-      if (url) {
+      const info = badges[badge];
+      if (info) {
         const img = document.createElement("img");
         img.className = "cvs-badge";
-        img.src = url;
-        img.alt = badge.split("/")[0];
+        img.src = info.url;
+        img.alt = info.title;
+        img.dataset.badgeKey = badge;
         el.appendChild(img);
       }
     }
@@ -1502,35 +1507,97 @@ function ensureTooltip() {
   if (tooltipEl) return;
   tooltipEl = document.createElement("div");
   tooltipEl.className = "cvs-tooltip cvs-hidden";
-  tooltipEl.innerHTML = `<div class="cvs-tooltip-img-wrap"><img class="cvs-tooltip-img"></div><div class="cvs-tooltip-details"><span class="cvs-tooltip-name"></span><span class="cvs-tooltip-provider"></span></div><div class="cvs-tooltip-scope"></div>`;
   document.body.appendChild(tooltipEl);
+}
+
+function makeTooltipEntry(emoteImg) {
+  const entry = document.createElement("div");
+  entry.className = "cvs-tooltip-entry cvs-tooltip-loading";
+  const wrap = document.createElement("div");
+  wrap.className = "cvs-tooltip-img-wrap";
+  const img = document.createElement("img");
+  img.className = "cvs-tooltip-img";
+  wrap.appendChild(img);
+  const details = document.createElement("div");
+  details.className = "cvs-tooltip-details";
+  const nameSpan = document.createElement("span");
+  nameSpan.className = "cvs-tooltip-name";
+  nameSpan.textContent = emoteImg.alt;
+  const provSpan = document.createElement("span");
+  provSpan.className = "cvs-tooltip-provider";
+  provSpan.textContent = PROVIDER_LABELS[emoteImg.dataset.provider] || emoteImg.dataset.provider;
+  details.appendChild(nameSpan);
+  details.appendChild(provSpan);
+  const scopeEl = document.createElement("div");
+  scopeEl.className = "cvs-tooltip-scope";
+  const s = emoteImg.dataset.scope;
+  scopeEl.textContent = s === "native" ? "Native" : s === "channel" ? "Channel" : "Global";
+  entry.appendChild(wrap);
+  entry.appendChild(details);
+  entry.appendChild(scopeEl);
+  img.onload = img.onerror = () => entry.classList.remove("cvs-tooltip-loading");
+  img.src = emoteUrl3x(emoteImg.src, emoteImg.dataset.provider);
+  if (img.complete) entry.classList.remove("cvs-tooltip-loading");
+  return entry;
 }
 
 function showTooltip(emoteImg) {
   ensureTooltip();
-  const provider = emoteImg.dataset.provider;
-  const scope = emoteImg.dataset.scope;
-  const name = emoteImg.alt;
-
-  const img = tooltipEl.querySelector(".cvs-tooltip-img");
-  const newSrc = emoteUrl3x(emoteImg.src, provider);
-  tooltipEl.classList.add("cvs-tooltip-loading");
-  img.onload = img.onerror = () => tooltipEl.classList.remove("cvs-tooltip-loading");
-  img.src = newSrc;
-  if (img.complete) tooltipEl.classList.remove("cvs-tooltip-loading");
-  tooltipEl.querySelector(".cvs-tooltip-name").textContent = name;
-  tooltipEl.querySelector(".cvs-tooltip-provider").textContent = PROVIDER_LABELS[provider] || provider;
-  tooltipEl.querySelector(".cvs-tooltip-scope").textContent = scope === "native" ? "Native" : scope === "channel" ? "Channel" : "Global";
+  tooltipEl.innerHTML = "";
+  const stack = emoteImg.closest(".cvs-emote-stack");
+  let emotes;
+  if (stack) {
+    const base = stack.querySelector(".cvs-emote:not(.cvs-emote-overlay)");
+    const overlays = [...stack.querySelectorAll(".cvs-emote-overlay")];
+    emotes = [...overlays, base];
+  } else {
+    emotes = [emoteImg];
+  }
+  emotes.forEach((e, i) => {
+    if (i > 0) { const sep = document.createElement("hr"); sep.className = "cvs-tooltip-sep"; tooltipEl.appendChild(sep); }
+    tooltipEl.appendChild(makeTooltipEntry(e));
+  });
   tooltipEl.classList.remove("cvs-hidden");
-
-  const rect = emoteImg.getBoundingClientRect();
+  const anchor = stack || emoteImg;
+  const rect = anchor.getBoundingClientRect();
   const tipW = tooltipEl.offsetWidth;
   const tipH = tooltipEl.offsetHeight;
   let left = rect.left + rect.width / 2 - tipW / 2;
   let top = rect.top - tipH - 6;
-  // Flip below if clipped at top
   if (top < 4) top = rect.bottom + 6;
-  // Clamp horizontally
+  left = Math.max(4, Math.min(left, window.innerWidth - tipW - 4));
+  tooltipEl.style.left = left + "px";
+  tooltipEl.style.top = top + "px";
+}
+
+function showBadgeTooltip(badgeImg) {
+  ensureTooltip();
+  tooltipEl.innerHTML = "";
+  const key = badgeImg.dataset.badgeKey;
+  const info = badges[key];
+  const entry = document.createElement("div");
+  entry.className = "cvs-tooltip-entry cvs-tooltip-loading";
+  const wrap = document.createElement("div");
+  wrap.className = "cvs-tooltip-img-wrap cvs-tooltip-img-wrap-badge";
+  const img = document.createElement("img");
+  img.className = "cvs-tooltip-img cvs-tooltip-img-badge";
+  wrap.appendChild(img);
+  const nameSpan = document.createElement("div");
+  nameSpan.className = "cvs-tooltip-name";
+  nameSpan.textContent = info?.title || key.split("/")[0];
+  entry.appendChild(wrap);
+  entry.appendChild(nameSpan);
+  img.onload = img.onerror = () => entry.classList.remove("cvs-tooltip-loading");
+  img.src = info?.url4x || badgeImg.src;
+  if (img.complete) entry.classList.remove("cvs-tooltip-loading");
+  tooltipEl.appendChild(entry);
+  tooltipEl.classList.remove("cvs-hidden");
+  const rect = badgeImg.getBoundingClientRect();
+  const tipW = tooltipEl.offsetWidth;
+  const tipH = tooltipEl.offsetHeight;
+  let left = rect.left + rect.width / 2 - tipW / 2;
+  let top = rect.top - tipH - 6;
+  if (top < 4) top = rect.bottom + 6;
   left = Math.max(4, Math.min(left, window.innerWidth - tipW - 4));
   tooltipEl.style.left = left + "px";
   tooltipEl.style.top = top + "px";

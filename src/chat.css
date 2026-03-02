@@ -357,11 +357,11 @@
   image-rendering: auto;
 }
 
-.cvs-tooltip-loading .cvs-tooltip-img {
+.cvs-tooltip-entry.cvs-tooltip-loading .cvs-tooltip-img {
   opacity: 0;
 }
 
-.cvs-tooltip-loading .cvs-tooltip-img-wrap::after {
+.cvs-tooltip-entry.cvs-tooltip-loading .cvs-tooltip-img-wrap::after {
   content: '';
   width: 24px;
   height: 24px;
@@ -374,6 +374,12 @@
 
 @keyframes cvs-spin {
   to { transform: rotate(360deg); }
+}
+
+.cvs-tooltip-sep {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 6px 0;
 }
 
 .cvs-tooltip-details {
@@ -400,6 +406,9 @@
   color: #898395;
   margin-top: 2px;
 }
+
+.cvs-tooltip-img-wrap-badge { min-height: 48px; margin-bottom: 4px; }
+.cvs-tooltip-img-badge { height: 48px; }
 
 /* --- In-chat settings gear + panel --- */
 

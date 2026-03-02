@@ -1,5 +1,5 @@
 // Fetch and merge global + channel badges from Twitch Helix API.
-// Returns a map: "set_id/version" -> image_url
+// Returns a map: "set_id/version" -> { url, url4x, title }
 
 let globalBadgesCache = null;
 
@@ -21,7 +21,7 @@ function parseBadgeResponse(data) {
   const map = {};
   for (const set of data) {
     for (const version of set.versions) {
-      map[`${set.set_id}/${version.id}`] = version.image_url_1x;
+      map[`${set.set_id}/${version.id}`] = { url: version.image_url_1x, url4x: version.image_url_4x, title: version.title || set.set_id };
     }
   }
   return map;

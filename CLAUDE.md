@@ -11,7 +11,7 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 - `src/popup.html` / `src/popup.js` — Extension popup for account management and settings.
 - `src/lib/auth.js` — OAuth helpers, account CRUD in `chrome.storage.local`.
 - `src/lib/irc.js` — TMI IRC message parser (tags, prefix, command, channel, trailing, username).
-- `src/lib/badges.js` — Fetches global + channel badges from Helix API. Global cached in memory. Channel overrides global. Returns map of `"set_id/version" -> url`.
+- `src/lib/badges.js` — Fetches global + channel badges from Helix API. Global cached in memory. Channel overrides global. Returns map of `"set_id/version" -> { url, url4x, title }`.
 - `src/lib/emotes.js` — Fetches 7TV, BTTV, FFZ emotes (global + channel). Cached in `chrome.storage.local` with TTLs (6h global, 1h channel) and a `CACHE_VERSION` — bump the version when the emote data structure changes to auto-invalidate stale cache entries. Priority on name collision: 7TV > BTTV > FFZ. Each provider fetch is wrapped in `safe()` so one failure doesn't break all emotes.
 - `src/lib/settings.js` — Shared `DEFAULT_SETTINGS` object imported by background.js and popup.js.
 
@@ -48,6 +48,9 @@ Twitch emotes parsed from IRC `emotes` tag (position-based). Third-party emotes 
 Hover an emote to see a 3x preview, name, provider label (7TV/BetterTTV/FrankerFaceZ/Twitch), and scope (Native/Channel/Global). Positioned above the emote, flips below if clipped at top, clamped horizontally. The tooltip img is wrapped in `.cvs-tooltip-img-wrap`; while the 3x image loads, `cvs-tooltip-loading` on the tooltip hides the img and shows a CSS spinner via `::after` on the wrapper. Cached images skip the spinner (`img.complete` check).
 
 **Scroll lock:** `tooltipLocked` flag prevents scroll-triggered tooltip switching. When `mouseover` fires on an emote (e.g. a new message scrolling under the cursor), the tooltip shows and `tooltipLocked` is set. While locked, further `mouseover` events are ignored. Any `mousemove` clears the lock and re-evaluates normally. This way the tooltip sticks to the original emote until the user physically moves the mouse.
+
+### Badge Tooltip
+Hover a badge to see a 4x preview image and the badge title (from Helix API). Uses the same shared tooltip element and positioning logic as emote tooltips. Badge `<img>` elements carry `data-badge-key` (e.g. `"moderator/1"`) for lookup into the `badges` map, which stores `{ url, url4x, title }` per badge. The scroll lock mechanism is shared with emote tooltips.
 
 ### Usercard
 Click a username to open a card showing avatar, display name, account creation date, and that user's message history from the current session (from `messageBuffer`). Profile fetched via Helix `users?login=` API. Positioned with top-right at click point, opens left and down. Dismissed by close button or click-outside.
@@ -271,7 +274,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ### Features
 - [ ] First message highlights — visually highlight a user's first message in the channel
 - [x] Channel points counter — display current channel points balance
-- [ ] Badge hovering — tooltip on badge hover showing badge info (normal Twitch, 7TV, other providers)
+- [x] Badge hovering — tooltip on badge hover showing badge title and 4x image preview
 - [x] Channel point redeems — redeem title shown via GQL `ChannelPointsContext` (reward id→title map fetched on channel join)
 - [ ] Channel points counter via GQL — revisit DOM scraping approach; `ChannelPointsContext` also returns `self.communityPoints.balance` (requires auth token), which would be more reliable than polling the native DOM element
 - [ ] Channel points menu — click points counter to open rewards menu for redeeming
