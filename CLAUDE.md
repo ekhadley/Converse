@@ -5,7 +5,7 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 
 ## File Structure
 - `src/manifest.json` — Extension manifest (v3). Background is a module service worker.
-- `src/background.js` — Service worker. IRC WebSocket, port management, Helix API calls, emote/badge fetching, VOD comment fetching via GQL.
+- `src/background.js` — Service worker. IRC WebSocket, PubSub WebSocket, port management, Helix API calls, emote/badge fetching, VOD comment fetching via GQL.
 - `src/content.js` — Content script injected on `twitch.tv/*`. Builds chat UI, renders messages, handles resize/scroll/tooltips/usercards, VOD detection and time-synced playback.
 - `src/chat.css` — All chat styling.
 - `src/popup.html` / `src/popup.js` — Extension popup for account management and settings.
@@ -19,8 +19,8 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 
 ### Communication
 Content script connects a long-lived port (`name: "chat"`) to the background service worker. On port disconnect (e.g. service worker restart), the content script reconnects and re-sends `channel-changed` to restore state. `broadcast()` in background auto-prunes dead ports. Messages:
-- **content -> background (port):** `channel-changed`, `send-message`, `get-user-profile`, `vod-changed`, `vod-time`, `vod-seek`, `keepalive`
-- **background -> content (port):** `irc-message`, `recent-messages`, `channel-data` (badges + emotes + settings), `account-info`, `user-profile`, `vod-channel-data`, `vod-comments`
+- **content -> background (port):** `channel-changed`, `send-message`, `get-user-profile`, `vod-changed`, `vod-time`, `vod-seek`, `make-prediction`, `keepalive`
+- **background -> content (port):** `irc-message`, `recent-messages`, `channel-data` (badges + emotes + settings), `account-info`, `user-profile`, `vod-channel-data`, `vod-comments`, `prediction-update`, `prediction-event`, `prediction-result`, `channel-points`, `pinned-message`
 - **content -> background (runtime message):** `open-extensions`, `reload-extension`
 
 **Service worker keepalive:** MV3 service workers terminate after 30s of no extension API events. WebSocket `onmessage` and `setInterval` callbacks with delays ≥30s do NOT count as extension events. VOD pages are immune (content script sends `vod-time` every 500ms), but live channels sent nothing after the initial `channel-changed`, so the worker would die and kill the IRC WebSocket. The content script now sends a `keepalive` port message every 25s (under Chrome's 30s threshold) to prevent this. The background has no handler for it — the port message event itself resets Chrome's idle timer.
@@ -29,6 +29,15 @@ Settings changes propagate via `chrome.storage.onChanged` listener in content sc
 
 ### IRC Connection
 Single WebSocket to `wss://irc-ws.chat.twitch.tv:443`. Requests `twitch.tv/tags` and `twitch.tv/commands` capabilities. Authenticates as the active account or anonymous (`justinfan`). Reconnects with exponential backoff (1s to 30s). Joins/parts channels based on which content script ports are active — only parts when no port is watching a channel. Client-side PING sent every 60s; if no PONG received before the next ping, the connection is assumed dead and force-closed. Handles Twitch `RECONNECT` command by closing the socket to trigger reconnect.
+
+### PubSub Connection
+Single WebSocket to `wss://pubsub-edge.twitch.tv`. Mirrors IRC connection pattern: exponential backoff reconnect (1s→30s), PING every 4 minutes (PubSub spec: must ping within 5 min), PONG timeout detection. Requires authenticated account (auth token sent per-LISTEN). On reconnect, re-LISTENs all topics from `pubsubTopics` Map.
+
+**Topic management:** `pubsubSubscribe(topic, channel, handler)` stores the topic in `pubsubTopics` and sends a LISTEN frame. `pubsubUnsubscribe(topic)` removes it and sends UNLISTEN. Per-channel topics (pinned messages) are subscribed on `channel-changed` after userId is resolved, and unsubscribed when the last port leaves a channel. Per-user topics (channel points) are subscribed once on init/account change.
+
+**State:** `channelUserIds` maps `channelLogin → numericUserId` for PubSub topic construction. Populated from the `getUserId()` call in `channel-changed`.
+
+**Integration points:** PubSub socket is connected/reconnected alongside IRC in `init()`, `add-account`, `account-changed`, and `silentReauth()`.
 
 ### Channel Detection
 `getChannel()` parses `location.pathname` for a channel name, excluding known non-channel paths (directory, settings, payments, videos, etc.). Polled every 1.5s + on MutationObserver fires. On channel change: clears messages, clears `seenMsgIds`, resets `messageBuffer`, closes usercard. When navigating away from a channel (channel becomes null), resize CSS overrides are cleared so Twitch can manage the player (mini-player, PiP, etc.).
@@ -93,10 +102,41 @@ Uses `msg.tags.color` if present, falls back to `userColors` map (populated from
 `USERNOTICE` messages with `msg-id` of `subgift`, `submysterygift`, or `anonsubgift` render as grayed-out system lines (`.cvs-line-system`). Mystery gifts ("X is gifting N Tier 1 subs!") include a collapsible dropdown (▸/▾ toggle) that accumulates recipient names from the subsequent individual `subgift` messages via `pendingMysteryGifts` map (keyed by gifter username, tracks remaining count and the names DOM element). Standalone gift subs render as "X gifted a Tier 1 sub to Y". Anonymous gifters (`ananonymousgifter`) display as "Anonymous". `pendingMysteryGifts` is cleared on channel switch, VOD change, and VOD seek.
 
 ### Channel Points Counter
-Displays the user's channel points balance to the right of the chat input, inside a `.cvs-input-row` flex wrapper. Read directly from Twitch's native `.community-points-summary` DOM element (hidden by our CSS but still live in the DOM). Polled every 3s via `pollChannelPoints()`. Shows a channel points icon (SVG) + formatted balance (e.g. "333.9K"). Hidden on VOD pages, when no channel is active, or when the native element isn't present (channel has no points program). No GQL or background involvement — purely content script DOM scraping.
+Displays the user's channel points balance to the right of the chat input, inside a `.cvs-input-row` flex wrapper. Primary source is PubSub (`community-points-user-v1` topic) — see "Channel Points via PubSub" section. Fallback: DOM scraping from Twitch's native `.community-points-summary` element, polled every 3s via `pollChannelPoints()`. DOM polling is skipped when `pointsPubSub` is true. Shows a channel points icon (SVG) + formatted balance (e.g. "333.9K"). Hidden on VOD pages or when no channel is active.
 
 ### Channel Point Redeems
 Messages with the `custom-reward-id` IRC tag are channel point redeems. The reward ID is a UUID with no name attached. On channel join, `fetchChannelRewards(channelLogin)` calls the `ChannelPointsContext` GQL operation (no auth required) to fetch `communityPointsSettings.customRewards`, building a `rewardId → title` map sent to the content script as part of `channel-data`. In `buildMessageLine`, redeems render a `.cvs-meta-bar` label above the message body showing the reward title (or "Channel Point Redeem" as fallback). The GQL persisted query hash is volatile — Twitch may rotate it.
+
+### Predictions
+Displays active channel predictions with a collapsible banner near the top of chat and allows placing bets via GQL mutation.
+
+**Data layer:** Background polls `ChannelPointsPredictionContext` GQL operation every 5s per channel via `startPredictionPoll(channel)`. Uses `gqlFetchAuth` (with user's OAuth token) when logged in to get user's own bet data, falls back to `gqlFetch` for anonymous. `normalizePrediction()` handles field name variations in the GQL response. `broadcastToChannel()` sends prediction updates only to ports watching that channel. State diffing detects transitions (ACTIVE→LOCKED→RESOLVED/CANCELED) and sends `prediction-event` messages for chat system lines.
+
+**Bet placement:** `MakePrediction` GQL mutation via `gqlFetchAuth`. Content sends `make-prediction` with `eventId`, `outcomeId`, `points`. Background generates a `transactionID` via `crypto.randomUUID()`, executes the mutation, then force-polls to update `userPrediction` state immediately.
+
+**Banner (`.cvs-pred-banner`):** Flex child of `#cvs-chat` above `.cvs-messages`. Shows prediction title (truncated), countdown timer (client-side via `startPredictionCountdown`), and chevron (▸/▾) to expand. For RESOLVED/CANCELED: shows result text + dismiss × button. Click toggles expanded panel.
+
+**Panel (`.cvs-pred-panel`):** Expanded view below banner. Each outcome shows: name (colored per outcome), percentage, ratio bar (6px, colored fill), point total (formatted: 1.2M, 450K), voter count. When ACTIVE + logged in: bet input (number field) + "Bet" button per outcome. Shows user's existing bet if placed. When LOCKED: no bet inputs. When RESOLVED: winning outcome highlighted, losers dimmed.
+
+**System messages:** State transitions render as `.cvs-line.cvs-line-prediction` with pink accent (#e841bb). Messages: "Prediction: {title}", "Prediction locked", "{winner} wins!", "Prediction canceled — points refunded".
+
+**Outcome colors:** BLUE=#388BFF, PINK=#F50097 (matches Twitch native palette).
+
+**State cleanup:** `clearPredictionState()` called on channel switch, VOD entry, and VOD seek. `stopPredictionPoll()` called when no port watches a channel.
+
+**GQL hashes:** `GQL_PREDICTIONS_HASH` for the query, `GQL_MAKE_PREDICTION_HASH` for the mutation. Both are volatile — Twitch may rotate them (same risk as rewards/VOD hashes).
+
+### Pinned Messages
+Displays moderator-pinned messages via a collapsible banner below the prediction panel.
+
+**Data layer:** Background subscribes to PubSub topic `pinned-chat-updates-v1.<channelUserId>` on channel join, forwards raw payloads to content script as `pinned-message` port messages. Unsubscribes when last port leaves a channel.
+
+**Banner (`.cvs-pin-banner`):** Flex child of `#cvs-chat` between prediction panel and message list. Shows pin icon, sender username (colored), truncated message text, optional countdown timer (if `ends_at` present), dismiss button, and expand chevron. Click toggles expanded panel showing full message text. Dismiss hides until channel switch. Payload structure is undocumented — handler uses defensive optional chaining, expects `type` field (`pin-message`, `update-message`, `unpin-message`) and nested message/sender data.
+
+**State cleanup:** `clearPinnedState()` called alongside `clearPredictionState()` on channel switch, VOD entry, and VOD seek.
+
+### Channel Points via PubSub
+Channel points balance is delivered via PubSub topic `community-points-user-v1.<userId>` (per-user, fires for all channels). Background subscribes on init/account change, broadcasts `channel-points` messages to all ports. Content script sets `pointsPubSub = true` on first receipt and skips DOM polling. **Fallback:** If no PubSub points arrive, the existing 3s DOM polling (`pollChannelPoints()`) continues as before. On channel switch, `pointsPubSub` resets to `false` so fallback can kick in if PubSub is down.
 
 ### @Mention Highlighting
 Words starting with `@` followed by a valid username pattern are rendered as `.cvs-mention` spans — bold, colored (using the mentioned user's color from `userColors` or hash fallback), and clickable (opens usercard). Messages that mention the logged-in user get a `.cvs-line-mention` class: purple-tinted background with a left border accent.
@@ -135,7 +175,7 @@ Two access points, both read/write the same `chrome.storage.local` `settings` ke
 
 **In-chat settings panel**: Gear icon (`.cvs-settings-btn`) in top-right of `#cvs-chat`, visible on hover. Click toggles a dropdown panel (`.cvs-settings-panel`) with the full settings menu: hide chat, use Twitch chat, timestamps, badges, font size, spacing, message cap, row colors, emote providers, plus extension actions (open chrome://extensions, reload extension). Click-outside dismisses. Extension action buttons proxy through runtime messages to the background since content scripts lack `chrome.tabs.create()`/`chrome.runtime.reload()` access.
 
-Settings: font size (10-20), message spacing (0-20), timestamps toggle, badges toggle, message cap (100-2000), odd/even row background colors, emote provider toggles (Twitch/7TV/BTTV/FFZ), hide chat, use native Twitch chat.
+Settings: font size (10-20), message spacing (0-20), timestamps toggle, badges toggle, predictions toggle, message cap (100-2000), odd/even row background colors, emote provider toggles (Twitch/7TV/BTTV/FFZ), hide chat, use native Twitch chat.
 
 ## Current State of Chat Resize Feature
 
@@ -276,9 +316,9 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [x] Channel points counter — display current channel points balance
 - [x] Badge hovering — tooltip on badge hover showing badge title and 4x image preview
 - [x] Channel point redeems — redeem title shown via GQL `ChannelPointsContext` (reward id→title map fetched on channel join)
-- [ ] Channel points counter via GQL — revisit DOM scraping approach; `ChannelPointsContext` also returns `self.communityPoints.balance` (requires auth token), which would be more reliable than polling the native DOM element
+- [x] Channel points counter via PubSub — replaced DOM scraping as primary source; `community-points-user-v1` PubSub topic delivers balance updates in real-time, DOM polling kept as fallback
 - [ ] Channel points menu — click points counter to open rewards menu for redeeming
-- [ ] Predictions — display and interact with channel predictions
+- [x] Predictions — display and interact with channel predictions (GQL polling + MakePrediction mutation, collapsible banner + panel UI)
 - [ ] Polls — display and interact with channel polls
 
 ## Icons

@@ -12,6 +12,7 @@ let settings = {
   messageSpacing: 2,
   showTimestamps: true,
   showBadges: true,
+  showPredictions: true,
   emoteProviders: { twitch: true, "7tv": true, bttv: true, ffz: true },
   messageCap: 500,
   chatWidth: null,
@@ -52,6 +53,24 @@ let threadMsgList = null;
 let threadInputEl = null;
 let threadResizeHandle = null;
 let threadHeightRatio = 0.3; // fraction of #cvs-chat height
+let currentPrediction = null;
+let predictionExpanded = false;
+let predictionDismissed = false;
+let predictionBanner = null;
+let predictionPanel = null;
+let predictionCountdown = null;
+let predictionCountdownEl = null;
+let predictionCountdownDeadline = 0;
+let pointsPubSub = false;
+let pointsFallbackTimer = null;
+let pinnedMessage = null;
+let pinnedBanner = null;
+let pinnedPanel = null;
+let pinnedDismissed = false;
+let pinnedExpanded = false;
+let pinnedCountdown = null;
+let pinnedCountdownEl = null;
+let pinnedCountdownDeadline = 0;
 
 // --- Channel detection ---
 function getChannel() {
@@ -119,6 +138,24 @@ function connectPort() {
     if (msg.type === "user-profile") {
       fillUsercardProfile(msg.login, msg.profile);
     }
+    if (msg.type === "prediction-update") {
+      currentPrediction = msg.prediction;
+      updatePredictionUI();
+    }
+    if (msg.type === "prediction-event") {
+      renderPredictionSystemMessage(msg.event, msg.prediction);
+    }
+    if (msg.type === "prediction-result") {
+      if (!msg.success) updatePredictionUI(); // re-enable bet buttons on failure
+    }
+    if (msg.type === "channel-points") {
+      pointsPubSub = true;
+      if (pointsFallbackTimer) { clearTimeout(pointsFallbackTimer); pointsFallbackTimer = null; }
+      updatePoints(formatPredPoints(msg.balance));
+    }
+    if (msg.type === "pinned-message") {
+      handlePinnedMessageUpdate(msg.data);
+    }
   });
 
   port.onDisconnect.addListener(() => {
@@ -148,6 +185,7 @@ function applySettings(s) {
   }
   applyChatVisibility();
   updateSettingsPanel();
+  updatePredictionUI();
 }
 
 function applyChatVisibility() {
@@ -216,6 +254,7 @@ function buildChatUI(shell) {
   messageList = document.createElement("div");
   messageList.className = "cvs-messages";
   messageList.addEventListener("scroll", onScroll);
+  messageList.addEventListener("wheel", onWheel);
   messageList.addEventListener("mouseover", (e) => {
     if (tooltipLocked) return;
     const emote = e.target.closest(".cvs-emote");
@@ -261,6 +300,7 @@ function buildChatUI(shell) {
   inputEl.type = "text";
   inputEl.maxLength = 500;
   updateInputPlaceholder();
+  inputEl.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); });
   inputEl.addEventListener("keydown", (e) => {
     const acOpen = acEl && !acEl.classList.contains("cvs-hidden");
     if (acOpen) {
@@ -335,6 +375,7 @@ function buildChatUI(shell) {
     const rect = scrollbar.getBoundingClientRect();
     const ratio = (e.clientY - rect.top) / rect.height;
     messageList.scrollTop = ratio * (messageList.scrollHeight - messageList.clientHeight);
+    pauseScroll();
   });
   messageList.addEventListener("scroll", updateScrollbar);
   messageList.addEventListener("mousedown", (e) => { if (e.button === 1) startMiddleScrollDrag(e); });
@@ -361,6 +402,7 @@ function buildChatUI(shell) {
     { label: "Twitch chat", key: "useNativeChat" },
     { label: "Timestamps", key: "showTimestamps" },
     { label: "Badges", key: "showBadges" },
+    { label: "Predictions", key: "showPredictions" },
   ];
   for (const { label, key } of toggles) {
     const row = document.createElement("div");
@@ -486,6 +528,7 @@ function buildChatUI(shell) {
   threadInputEl.type = "text";
   threadInputEl.maxLength = 500;
   threadInputEl.placeholder = "Reply in thread\u2026";
+  threadInputEl.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); });
   threadInputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && threadInputEl.value.trim() && account && currentChannel && currentThread) {
       const text = threadInputEl.value.trim();
@@ -528,6 +571,24 @@ function buildChatUI(shell) {
   inputRow.appendChild(inputWrap);
   inputRow.appendChild(pointsEl);
 
+  // Prediction banner + expanded panel (flex children above messages)
+  predictionBanner = document.createElement("div");
+  predictionBanner.className = "cvs-pred-banner cvs-hidden";
+  predictionBanner.addEventListener("click", () => { predictionExpanded = !predictionExpanded; updatePredictionUI(); });
+  predictionPanel = document.createElement("div");
+  predictionPanel.className = "cvs-pred-panel cvs-hidden";
+  chatContainer.appendChild(predictionBanner);
+  chatContainer.appendChild(predictionPanel);
+
+  // Pinned message banner + panel
+  pinnedBanner = document.createElement("div");
+  pinnedBanner.className = "cvs-pin-banner cvs-hidden";
+  pinnedBanner.addEventListener("click", () => { pinnedExpanded = !pinnedExpanded; updatePinnedUI(); });
+  pinnedPanel = document.createElement("div");
+  pinnedPanel.className = "cvs-pin-panel cvs-hidden";
+  chatContainer.appendChild(pinnedBanner);
+  chatContainer.appendChild(pinnedPanel);
+
   chatContainer.appendChild(messageList);
   chatContainer.appendChild(threadPanel);
   chatContainer.appendChild(scrollbar);
@@ -566,10 +627,9 @@ function updatePoints(text) {
 }
 
 function pollChannelPoints() {
-  if (vodId || !currentChannel) { updatePoints(null); return; }
+  if (vodId || !currentChannel || pointsPubSub) return;
   const el = document.querySelector('.community-points-summary');
   if (!el) { updatePoints(null); return; }
-  // Find the deepest element whose text looks like a balance (2+ chars, digits with optional K/M suffix)
   for (const child of el.querySelectorAll('span')) {
     const t = child.textContent.trim();
     if (t.length >= 2 && /^[\d,.]+[KMkm]?$/.test(t) && child.children.length === 0) { updatePoints(t); return; }
@@ -578,15 +638,29 @@ function pollChannelPoints() {
 }
 
 // --- Scroll ---
+// onScroll only handles resume (scroll back to bottom). Pausing is triggered
+// exclusively by user-initiated actions (wheel, scrollbar, middle-click) so
+// that layout changes (theatre toggle, window resize) can't accidentally detach.
 function onScroll() {
   if (resizing) return;
   const el = messageList;
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
   if (atBottom && !autoScroll) resumeScroll();
-  if (!atBottom && autoScroll) {
-    autoScroll = false;
-    pauseBar.classList.remove("cvs-hidden");
-  }
+}
+
+function pauseScroll() {
+  if (!autoScroll) return;
+  autoScroll = false;
+  pauseBar.classList.remove("cvs-hidden");
+}
+
+function onWheel() {
+  if (!autoScroll) return;
+  requestAnimationFrame(() => {
+    if (!autoScroll) return;
+    const el = messageList;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight >= 30) pauseScroll();
+  });
 }
 
 function resumeScroll() {
@@ -633,6 +707,7 @@ function startScrollDrag(e) {
 
   function onMove(e) {
     messageList.scrollTop = startScroll + ((e.clientY - startY) / trackH) * maxScroll;
+    pauseScroll();
   }
   function onUp() {
     scrollThumb.classList.remove("cvs-dragging");
@@ -646,6 +721,7 @@ function startScrollDrag(e) {
 function startMiddleScrollDrag(e) {
   if (middleScrollRAF) return;
   e.preventDefault();
+  pauseScroll();
   const anchorY = e.clientY;
   let deltaY = 0;
   messageList.classList.add("cvs-quickscroll");
@@ -946,6 +1022,321 @@ function startThreadResize(e) {
   }
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
+}
+
+// --- Predictions ---
+function formatPredPoints(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "K";
+  return String(n);
+}
+
+const PRED_COLORS = { BLUE: "#388BFF", PINK: "#F50097" };
+function predOutcomeColor(color) { return PRED_COLORS[color] || "#53535f"; }
+
+function clearPredictionCountdown() {
+  if (predictionCountdown) { clearInterval(predictionCountdown); predictionCountdown = null; }
+  predictionCountdownEl = null;
+  predictionCountdownDeadline = 0;
+}
+
+function startPredictionCountdown(el, prediction) {
+  const deadline = new Date(prediction.createdAt).getTime() + prediction.predictionWindowSeconds * 1000;
+  predictionCountdownEl = el;
+  if (predictionCountdown && predictionCountdownDeadline === deadline) {
+    // Same countdown, just new element from banner rebuild — update immediately
+    const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    el.textContent = Math.floor(remaining / 60) + ":" + String(remaining % 60).padStart(2, "0");
+    return;
+  }
+  clearPredictionCountdown();
+  predictionCountdownEl = el;
+  predictionCountdownDeadline = deadline;
+  function update() {
+    if (!predictionCountdownEl) return;
+    const remaining = Math.max(0, Math.ceil((predictionCountdownDeadline - Date.now()) / 1000));
+    predictionCountdownEl.textContent = Math.floor(remaining / 60) + ":" + String(remaining % 60).padStart(2, "0");
+    if (remaining <= 0) clearPredictionCountdown();
+  }
+  update();
+  predictionCountdown = setInterval(update, 1000);
+}
+
+function updatePredictionUI() {
+  if (!predictionBanner || !predictionPanel) return;
+  if (!settings.showPredictions || !currentPrediction || predictionDismissed) {
+    predictionBanner.classList.add("cvs-hidden");
+    predictionPanel.classList.add("cvs-hidden");
+    clearPredictionCountdown();
+    return;
+  }
+  const p = currentPrediction;
+
+  // --- Banner ---
+  predictionBanner.classList.remove("cvs-hidden");
+  predictionBanner.innerHTML = "";
+
+  const titleSpan = document.createElement("span");
+  titleSpan.className = "cvs-pred-title";
+  titleSpan.textContent = p.title;
+  titleSpan.title = p.title;
+  predictionBanner.appendChild(titleSpan);
+
+  const statusSpan = document.createElement("span");
+  statusSpan.className = "cvs-pred-timer";
+  if (p.status === "ACTIVE") {
+    startPredictionCountdown(statusSpan, p);
+  } else if (p.status === "LOCKED") {
+    statusSpan.textContent = "Locked";
+  } else if (p.status === "RESOLVED") {
+    const winner = p.outcomes.find(o => o.id === p.winningOutcomeId);
+    statusSpan.textContent = winner ? winner.title : "Resolved";
+  } else if (p.status === "CANCELED") {
+    statusSpan.textContent = "Canceled";
+  }
+  predictionBanner.appendChild(statusSpan);
+
+  if (p.status === "RESOLVED" || p.status === "CANCELED") {
+    const dismiss = document.createElement("button");
+    dismiss.className = "cvs-pred-dismiss";
+    dismiss.textContent = "\u00d7";
+    dismiss.addEventListener("click", (e) => { e.stopPropagation(); predictionDismissed = true; updatePredictionUI(); });
+    predictionBanner.appendChild(dismiss);
+  }
+  const chevron = document.createElement("span");
+  chevron.className = "cvs-pred-chevron";
+  chevron.textContent = predictionExpanded ? "\u25BE" : "\u25B8";
+  predictionBanner.appendChild(chevron);
+
+  // --- Expanded panel ---
+  if (predictionExpanded) {
+    predictionPanel.classList.remove("cvs-hidden");
+    renderPredictionPanel(p);
+  } else {
+    predictionPanel.classList.add("cvs-hidden");
+    predictionPanel.innerHTML = "";
+  }
+}
+
+function renderPredictionPanel(p) {
+  predictionPanel.innerHTML = "";
+  const totalPoints = p.outcomes.reduce((s, o) => s + o.totalPoints, 0) || 1;
+
+  for (const outcome of p.outcomes) {
+    const row = document.createElement("div");
+    row.className = "cvs-pred-outcome";
+    const isWinner = p.winningOutcomeId === outcome.id;
+    if (p.status === "RESOLVED") row.classList.add(isWinner ? "cvs-pred-winner" : "cvs-pred-loser");
+
+    // Header: name + percentage
+    const header = document.createElement("div");
+    header.className = "cvs-pred-outcome-header";
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = outcome.title;
+    nameSpan.style.color = predOutcomeColor(outcome.color);
+    const pct = Math.round((outcome.totalPoints / totalPoints) * 100);
+    const pctSpan = document.createElement("span");
+    pctSpan.className = "cvs-pred-pct";
+    pctSpan.textContent = pct + "%";
+    header.appendChild(nameSpan);
+    header.appendChild(pctSpan);
+    row.appendChild(header);
+
+    // Ratio bar
+    const bar = document.createElement("div");
+    bar.className = "cvs-pred-bar";
+    const fill = document.createElement("div");
+    fill.className = "cvs-pred-bar-fill";
+    fill.style.width = pct + "%";
+    fill.style.background = predOutcomeColor(outcome.color);
+    bar.appendChild(fill);
+    row.appendChild(bar);
+
+    // Stats
+    const stats = document.createElement("div");
+    stats.className = "cvs-pred-stats";
+    stats.textContent = `${formatPredPoints(outcome.totalPoints)} \u00b7 ${outcome.totalUsers} voter${outcome.totalUsers !== 1 ? "s" : ""}`;
+    row.appendChild(stats);
+
+    // Bet display or input
+    const userBet = p.userPrediction;
+    if ((p.status === "ACTIVE" || p.status === "LOCKED") && userBet?.outcomeId === outcome.id) {
+      const betInfo = document.createElement("div");
+      betInfo.className = "cvs-pred-your-bet";
+      betInfo.textContent = `Your bet: ${formatPredPoints(userBet.points)}`;
+      row.appendChild(betInfo);
+    } else if (p.status === "ACTIVE" && account && !userBet) {
+      const betRow = document.createElement("div");
+      betRow.className = "cvs-pred-bet-row";
+      const betInput = document.createElement("input");
+      betInput.type = "number";
+      betInput.className = "cvs-pred-bet-input";
+      betInput.placeholder = "Points";
+      betInput.min = "10";
+      betInput.addEventListener("click", (e) => e.stopPropagation());
+      const betBtn = document.createElement("button");
+      betBtn.className = "cvs-pred-bet-btn";
+      betBtn.textContent = "Bet";
+      betBtn.style.background = predOutcomeColor(outcome.color);
+      betBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const pts = parseInt(betInput.value);
+        if (!pts || pts < 10) return;
+        port.postMessage({ type: "make-prediction", eventId: p.id, outcomeId: outcome.id, points: pts });
+        betBtn.disabled = true;
+        betBtn.textContent = "\u2026";
+      });
+      betRow.appendChild(betInput);
+      betRow.appendChild(betBtn);
+      row.appendChild(betRow);
+    }
+
+    predictionPanel.appendChild(row);
+  }
+}
+
+function renderPredictionSystemMessage(event, prediction) {
+  if (!settings.showPredictions) return;
+  const line = document.createElement("div");
+  line.className = "cvs-line cvs-line-prediction";
+  const bar = document.createElement("div");
+  bar.className = "cvs-meta-bar";
+  if (event === "started") bar.textContent = `Prediction: ${prediction.title}`;
+  else if (event === "locked") bar.textContent = "Prediction locked";
+  else if (event === "resolved") {
+    const winner = prediction.outcomes.find(o => o.id === prediction.winningOutcomeId);
+    bar.textContent = winner ? `${winner.title} wins!` : "Prediction resolved";
+  } else if (event === "canceled") bar.textContent = "Prediction canceled \u2014 points refunded";
+  line.appendChild(bar);
+  queueLine(line);
+}
+
+function clearPredictionState() {
+  currentPrediction = null;
+  predictionExpanded = false;
+  predictionDismissed = false;
+  clearPredictionCountdown();
+  updatePredictionUI();
+}
+
+// --- Pinned Messages ---
+function handlePinnedMessageUpdate(payload) {
+  const type = payload?.type;
+  if (type === "pin-message" || type === "update-message") {
+    pinnedMessage = payload?.data?.message || payload?.data || payload;
+    pinnedDismissed = false;
+    updatePinnedUI();
+  } else if (type === "unpin-message") {
+    pinnedMessage = null;
+    updatePinnedUI();
+  }
+}
+
+function clearPinnedCountdown() {
+  if (pinnedCountdown) { clearInterval(pinnedCountdown); pinnedCountdown = null; }
+  pinnedCountdownEl = null;
+  pinnedCountdownDeadline = 0;
+}
+
+function startPinnedCountdown(el, endsAt) {
+  const deadline = new Date(endsAt).getTime();
+  pinnedCountdownEl = el;
+  if (pinnedCountdown && pinnedCountdownDeadline === deadline) {
+    const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    el.textContent = Math.floor(remaining / 60) + ":" + String(remaining % 60).padStart(2, "0");
+    return;
+  }
+  clearPinnedCountdown();
+  pinnedCountdownEl = el;
+  pinnedCountdownDeadline = deadline;
+  function update() {
+    if (!pinnedCountdownEl) return;
+    const remaining = Math.max(0, Math.ceil((pinnedCountdownDeadline - Date.now()) / 1000));
+    pinnedCountdownEl.textContent = Math.floor(remaining / 60) + ":" + String(remaining % 60).padStart(2, "0");
+    if (remaining <= 0) clearPinnedCountdown();
+  }
+  update();
+  pinnedCountdown = setInterval(update, 1000);
+}
+
+function updatePinnedUI() {
+  if (!pinnedBanner) return;
+  if (!pinnedMessage || pinnedDismissed) {
+    pinnedBanner.classList.add("cvs-hidden");
+    if (pinnedPanel) pinnedPanel.classList.add("cvs-hidden");
+    clearPinnedCountdown();
+    return;
+  }
+  pinnedBanner.classList.remove("cvs-hidden");
+  pinnedBanner.innerHTML = "";
+
+  // Pin icon
+  const icon = document.createElement("span");
+  icon.textContent = "\uD83D\uDCCC";
+  icon.style.flexShrink = "0";
+  pinnedBanner.appendChild(icon);
+
+  // Username
+  const pin = pinnedMessage;
+  const sender = pin.sender || pin.pinned_by || {};
+  const displayName = sender.display_name || sender.login || "Unknown";
+  const userSpan = document.createElement("span");
+  userSpan.className = "cvs-pin-user";
+  userSpan.textContent = displayName;
+  if (sender.chat_color) userSpan.style.color = sender.chat_color;
+  pinnedBanner.appendChild(userSpan);
+
+  // Message text (truncated)
+  const msgText = pin.message?.text || pin.content?.text || "";
+  const titleSpan = document.createElement("span");
+  titleSpan.className = "cvs-pin-title";
+  titleSpan.textContent = msgText;
+  titleSpan.title = msgText;
+  pinnedBanner.appendChild(titleSpan);
+
+  // Timer if ends_at present
+  const endsAt = pin.ends_at || pin.expires_at;
+  if (endsAt) {
+    const timerSpan = document.createElement("span");
+    timerSpan.className = "cvs-pin-timer";
+    startPinnedCountdown(timerSpan, endsAt);
+    pinnedBanner.appendChild(timerSpan);
+  }
+
+  // Dismiss button
+  const dismiss = document.createElement("button");
+  dismiss.className = "cvs-pin-dismiss";
+  dismiss.textContent = "\u00d7";
+  dismiss.addEventListener("click", (e) => { e.stopPropagation(); pinnedDismissed = true; updatePinnedUI(); });
+  pinnedBanner.appendChild(dismiss);
+
+  // Chevron
+  const chevron = document.createElement("span");
+  chevron.className = "cvs-pin-chevron";
+  chevron.textContent = pinnedExpanded ? "\u25BE" : "\u25B8";
+  pinnedBanner.appendChild(chevron);
+
+  // Expanded panel
+  if (pinnedExpanded && pinnedPanel) {
+    pinnedPanel.classList.remove("cvs-hidden");
+    pinnedPanel.innerHTML = "";
+    const body = document.createElement("div");
+    body.className = "cvs-body";
+    body.style.fontSize = "13px";
+    body.textContent = msgText;
+    pinnedPanel.appendChild(body);
+  } else if (pinnedPanel) {
+    pinnedPanel.classList.add("cvs-hidden");
+    pinnedPanel.innerHTML = "";
+  }
+}
+
+function clearPinnedState() {
+  pinnedMessage = null;
+  pinnedDismissed = false;
+  pinnedExpanded = false;
+  clearPinnedCountdown();
+  updatePinnedUI();
 }
 
 // --- Build a PRIVMSG line element ---
@@ -1845,6 +2236,8 @@ function startVodPoll() {
       pendingMysteryGifts = {};
       exitReplyMode();
       closeThread();
+      clearPredictionState();
+      clearPinnedState();
       port.postMessage({ type: "vod-seek", videoId: vodId, offset });
     } else {
       port.postMessage({ type: "vod-time", videoId: vodId, offset });
@@ -1882,6 +2275,8 @@ function pollChannel() {
       closeAutocomplete();
       exitReplyMode();
       closeThread();
+      clearPredictionState();
+      clearPinnedState();
       updatePoints(null);
       updateInputPlaceholder();
       if (port) port.postMessage({ type: "vod-changed", videoId: vid });
@@ -1910,6 +2305,10 @@ function pollChannel() {
     closeAutocomplete();
     exitReplyMode();
     closeThread();
+    clearPredictionState();
+    clearPinnedState();
+    pointsPubSub = false;
+    if (pointsFallbackTimer) { clearTimeout(pointsFallbackTimer); pointsFallbackTimer = null; }
     updatePoints(null);
   }
 }

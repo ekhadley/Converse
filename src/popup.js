@@ -68,6 +68,7 @@ const msgSpacingDec = document.getElementById("messageSpacingDec");
 const msgSpacingInc = document.getElementById("messageSpacingInc");
 const showTimestampsEl = document.getElementById("showTimestamps");
 const showBadgesEl = document.getElementById("showBadges");
+const showPredictionsEl = document.getElementById("showPredictions");
 const messageCapEl = document.getElementById("messageCap");
 const bgOddEl = document.getElementById("bgOdd");
 const bgOddSwatch = document.getElementById("bgOddSwatch");
@@ -87,6 +88,7 @@ async function loadSettings() {
   msgSpacingEl.value = s.messageSpacing;
   showTimestampsEl.checked = s.showTimestamps;
   showBadgesEl.checked = s.showBadges;
+  showPredictionsEl.checked = s.showPredictions;
   messageCapEl.value = s.messageCap;
   bgOddEl.value = s.bgOdd;
   bgOddSwatch.style.background = s.bgOdd;
@@ -106,6 +108,7 @@ function readSettings() {
     messageSpacing: parseInt(msgSpacingEl.value),
     showTimestamps: showTimestampsEl.checked,
     showBadges: showBadgesEl.checked,
+    showPredictions: showPredictionsEl.checked,
     messageCap: parseInt(messageCapEl.value),
     bgOdd: bgOddEl.value,
     bgEven: bgEvenEl.value,
@@ -151,6 +154,7 @@ msgSpacingInc.addEventListener("click", () => {
 msgSpacingEl.addEventListener("change", saveSettings);
 showTimestampsEl.addEventListener("change", saveSettings);
 showBadgesEl.addEventListener("change", saveSettings);
+showPredictionsEl.addEventListener("change", saveSettings);
 messageCapEl.addEventListener("change", saveSettings);
 for (const [el, swatch] of [[bgOddEl, bgOddSwatch], [bgEvenEl, bgEvenSwatch]]) {
   el.addEventListener("input", () => {
