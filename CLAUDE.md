@@ -5,7 +5,7 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 
 ## File Structure
 - `src/manifest.json` — Extension manifest (v3). Background is a module service worker.
-- `src/background.js` — Service worker. IRC WebSocket, PubSub WebSocket, port management, Helix API calls, emote/badge fetching, VOD comment fetching via GQL.
+- `src/background.js` — Service worker. IRC WebSocket, EventSub WebSocket, port management, Helix API calls, emote/badge fetching, VOD comment fetching via GQL.
 - `src/content.js` — Content script injected on `twitch.tv/*`. Builds chat UI, renders messages, handles resize/scroll/tooltips/usercards, VOD detection and time-synced playback.
 - `src/chat.css` — All chat styling.
 - `src/popup.html` / `src/popup.js` — Extension popup for account management and settings.
@@ -30,14 +30,20 @@ Settings changes propagate via `chrome.storage.onChanged` listener in content sc
 ### IRC Connection
 Single WebSocket to `wss://irc-ws.chat.twitch.tv:443`. Requests `twitch.tv/tags` and `twitch.tv/commands` capabilities. Authenticates as the active account or anonymous (`justinfan`). Reconnects with exponential backoff (1s to 30s). Joins/parts channels based on which content script ports are active — only parts when no port is watching a channel. Client-side PING sent every 60s; if no PONG received before the next ping, the connection is assumed dead and force-closed. Handles Twitch `RECONNECT` command by closing the socket to trigger reconnect.
 
-### PubSub Connection
-Single WebSocket to `wss://pubsub-edge.twitch.tv`. Mirrors IRC connection pattern: exponential backoff reconnect (1s→30s), PING every 4 minutes (PubSub spec: must ping within 5 min), PONG timeout detection. Requires authenticated account (auth token sent per-LISTEN). On reconnect, re-LISTENs all topics from `pubsubTopics` Map.
+### EventSub WebSocket Connection
+Single WebSocket to `wss://eventsub.wss.twitch.tv/ws`. Twitch's official real-time event API, replacing the deprecated PubSub endpoint. Requires OAuth scopes per event type (`channel:read:predictions`, `channel:read:polls`).
 
-**Topic management:** `pubsubSubscribe(topic, channel, handler)` stores the topic in `pubsubTopics` and sends a LISTEN frame. `pubsubUnsubscribe(topic)` removes it and sends UNLISTEN. Per-channel topics (pinned messages) are subscribed on `channel-changed` after userId is resolved, and unsubscribed when the last port leaves a channel. Per-user topics (channel points) are subscribed once on init/account change.
+**Protocol:** On connect, server sends `session_welcome` with `session_id` (needed for Helix subscription creation) and `keepalive_timeout_seconds`. Server sends `session_keepalive` within the timeout window; if no message arrives within `keepalive_seconds + 5s`, connection is assumed dead and force-closed. `session_reconnect` provides a new URL — connect to it, close old socket after new welcome arrives (subscriptions carry over). `notification` delivers event payloads. `revocation` means a subscription was killed (token revoked, scope lost, etc.) — clean up tracking and fall back to GQL polling.
 
-**State:** `channelUserIds` maps `channelLogin → numericUserId` for PubSub topic construction. Populated from the `getUserId()` call in `channel-changed`.
+**Scope detection:** `checkEventSubScopes()` validates the current token via `/validate` and checks for `channel:read:predictions`. Old tokens (pre-scope-upgrade) → `eventSubHasScopes = false` → GQL polling fallback. New tokens → EventSub primary path.
 
-**Integration points:** PubSub socket is connected/reconnected alongside IRC in `init()`, `add-account`, `account-changed`, and `silentReauth()`.
+**Subscription management:** `eventSubSubscribe(type, version, condition, channel)` POSTs to Helix `eventsub/subscriptions` with WebSocket transport. Tracked in `eventSubSubscriptions` (subId → {type, channel}) and `eventSubChannelSubs` (channel → [subIds]). `eventSubUnsubscribeChannel(channel)` DELETEs all subs for a channel. `resubscribeAllEventSub()` called on fresh connect — iterates `joinedChannels`, subscribes predictions, stops GQL polls.
+
+**State:** `channelUserIds` maps `channelLogin → numericUserId` for EventSub condition construction. Populated from `getUserId()` in `channel-changed`.
+
+**Integration points:** EventSub socket is connected/reconnected alongside IRC in `init()`, `add-account`, `account-changed`, and `silentReauth()`. Exponential backoff reconnect (1s→30s), same pattern as IRC. On disconnect, GQL polling resumes for all channels as fallback.
+
+**Race condition:** If `channel-changed` fires before EventSub welcome, GQL polling starts as fallback. When `resubscribeAllEventSub()` runs after welcome, it subscribes and stops the GQL poll — clean handoff, no duplicates.
 
 ### Channel Detection
 `getChannel()` parses `location.pathname` for a channel name, excluding known non-channel paths (directory, settings, payments, videos, etc.). Polled every 1.5s + on MutationObserver fires. On channel change: clears messages, clears `seenMsgIds`, resets `messageBuffer`, closes usercard. When navigating away from a channel (channel becomes null), resize CSS overrides are cleared so Twitch can manage the player (mini-player, PiP, etc.).
@@ -110,9 +116,13 @@ Messages with the `custom-reward-id` IRC tag are channel point redeems. The rewa
 ### Predictions
 Displays active channel predictions with a collapsible banner near the top of chat and allows placing bets via GQL mutation.
 
-**Data layer:** Background polls `ChannelPointsPredictionContext` GQL operation every 5s per channel via `startPredictionPoll(channel)`. Uses `gqlFetchAuth` (with user's OAuth token) when logged in to get user's own bet data, falls back to `gqlFetch` for anonymous. `normalizePrediction()` handles field name variations in the GQL response. `broadcastToChannel()` sends prediction updates only to ports watching that channel. State diffing detects transitions (ACTIVE→LOCKED→RESOLVED/CANCELED) and sends `prediction-event` messages for chat system lines.
+**Data layer (EventSub primary):** Background subscribes to `channel.prediction.{begin,progress,lock,end}` EventSub topics per channel. EventSub delivers real-time events — no polling delay. `handlePredictionEvent()` normalizes EventSub snake_case payloads to the same camelCase shape as the GQL path via `normalizeEventSubPrediction()`. Content script receives identical `prediction-update`/`prediction-event` messages regardless of source.
 
-**Bet placement:** `MakePrediction` GQL mutation via `gqlFetchAuth`. Content sends `make-prediction` with `eventId`, `outcomeId`, `points`. Background generates a `transactionID` via `crypto.randomUUID()`, executes the mutation, then force-polls to update `userPrediction` state immediately.
+**Data layer (GQL fallback):** When EventSub is unavailable (anonymous users, old tokens missing `channel:read:predictions` scope, EventSub not yet connected), falls back to polling `ChannelPointsPredictionContext` GQL operation every 5s via `startPredictionPoll(channel)`. Uses auth when logged in to get user's own bet data. `normalizePrediction()` handles field name variations. State diffing detects transitions (ACTIVE→LOCKED→RESOLVED/CANCELED). GQL polling starts immediately on channel join and is stopped when EventSub subscribes successfully.
+
+**userPrediction cache:** EventSub doesn't include the viewer's own bet. `userPredictions` map (predictionId → {outcomeId, points}) is populated by GQL fetch after `make-prediction` and merged into normalized predictions before broadcasting.
+
+**Bet placement:** `MakePrediction` GQL mutation via `gqlFetch` with auth. Content sends `make-prediction` with `eventId`, `outcomeId`, `points`. Background generates a `transactionID` via `crypto.randomUUID()`, executes the mutation, then force-fetches GQL to update `userPredictions` cache immediately.
 
 **Banner (`.cvs-pred-banner`):** Flex child of `#cvs-chat` above `.cvs-messages`. Shows prediction title (truncated), countdown timer (client-side via `startPredictionCountdown`), and chevron (▸/▾) to expand. For RESOLVED/CANCELED: shows result text + dismiss × button. Click toggles expanded panel.
 
@@ -122,21 +132,21 @@ Displays active channel predictions with a collapsible banner near the top of ch
 
 **Outcome colors:** BLUE=#388BFF, PINK=#F50097 (matches Twitch native palette).
 
-**State cleanup:** `clearPredictionState()` called on channel switch, VOD entry, and VOD seek. `stopPredictionPoll()` called when no port watches a channel.
+**State cleanup:** `clearPredictionState()` called on channel switch, VOD entry, and VOD seek. `stopPredictionPoll()` and `eventSubUnsubscribeChannel()` called when no port watches a channel.
 
 **GQL hashes:** `GQL_PREDICTIONS_HASH` for the query, `GQL_MAKE_PREDICTION_HASH` for the mutation. Both are volatile — Twitch may rotate them (same risk as rewards/VOD hashes).
 
 ### Pinned Messages
 Displays moderator-pinned messages via a collapsible banner below the prediction panel.
 
-**Data layer:** Background subscribes to PubSub topic `pinned-chat-updates-v1.<channelUserId>` on channel join, forwards raw payloads to content script as `pinned-message` port messages. Unsubscribes when last port leaves a channel.
+**Data layer:** Background polls `GetPinnedChat` GQL operation every 30s per channel via `startPinnedPoll(channel)`. Sends normalized pin data to content script as `pinned-message` port messages. Stopped when last port leaves a channel.
 
-**Banner (`.cvs-pin-banner`):** Flex child of `#cvs-chat` between prediction panel and message list. Shows pin icon, sender username (colored), truncated message text, optional countdown timer (if `ends_at` present), dismiss button, and expand chevron. Click toggles expanded panel showing full message text. Dismiss hides until channel switch. Payload structure is undocumented — handler uses defensive optional chaining, expects `type` field (`pin-message`, `update-message`, `unpin-message`) and nested message/sender data.
+**Banner (`.cvs-pin-banner`):** Flex child of `#cvs-chat` between prediction panel and message list. Shows pin icon, sender username (colored), truncated message text, optional countdown timer (if `endsAt` present), dismiss button, and expand chevron. Click toggles expanded panel showing full message text. Dismiss hides until channel switch.
 
 **State cleanup:** `clearPinnedState()` called alongside `clearPredictionState()` on channel switch, VOD entry, and VOD seek.
 
-### Channel Points via PubSub
-Channel points balance is delivered via PubSub topic `community-points-user-v1.<userId>` (per-user, fires for all channels). Background subscribes on init/account change, broadcasts `channel-points` messages to all ports. Content script sets `pointsPubSub = true` on first receipt and skips DOM polling. **Fallback:** If no PubSub points arrive, the existing 3s DOM polling (`pollChannelPoints()`) continues as before. On channel switch, `pointsPubSub` resets to `false` so fallback can kick in if PubSub is down.
+### Channel Points
+Channel points balance displayed via DOM scraping from Twitch's native `.community-points-summary` element, polled every 3s via `pollChannelPoints()`. Shows channel points icon (SVG) + formatted balance (e.g. "333.9K"). Hidden on VOD pages or when no channel is active.
 
 ### @Mention Highlighting
 Words starting with `@` followed by a valid username pattern are rendered as `.cvs-mention` spans — bold, colored (using the mentioned user's color from `userColors` or hash fallback), and clickable (opens usercard). Messages that mention the logged-in user get a `.cvs-line-mention` class: purple-tinted background with a left border accent.
@@ -166,7 +176,7 @@ On VOD pages (`/videos/{id}`), historical chat comments are fetched from Twitch'
 **Input:** Disabled with "Replay chat" placeholder on VOD pages. Badges and emotes are fetched for the VOD's channel (resolved via Helix `videos?id=`).
 
 ### Account Management
-OAuth flow via `chrome.identity.launchWebAuthFlow` with scopes `chat:read chat:edit`. Multiple accounts stored in `chrome.storage.local`, one active at a time. Switch/remove from popup. Changing account closes IRC and reconnects.
+OAuth flow via `chrome.identity.launchWebAuthFlow` with scopes `chat:read chat:edit channel:read:predictions channel:read:polls`. Multiple accounts stored in `chrome.storage.local`, one active at a time. Switch/remove from popup. Changing account closes IRC/EventSub and reconnects. Old tokens missing new scopes are detected via `/validate` — EventSub features degrade gracefully to GQL polling.
 
 ### Settings
 Two access points, both read/write the same `chrome.storage.local` `settings` key, applied live via `chrome.storage.onChanged`:
@@ -316,7 +326,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [x] Channel points counter — display current channel points balance
 - [x] Badge hovering — tooltip on badge hover showing badge title and 4x image preview
 - [x] Channel point redeems — redeem title shown via GQL `ChannelPointsContext` (reward id→title map fetched on channel join)
-- [x] Channel points counter via PubSub — replaced DOM scraping as primary source; `community-points-user-v1` PubSub topic delivers balance updates in real-time, DOM polling kept as fallback
+- [x] Channel points counter — DOM scraping from Twitch's native community-points-summary element
 - [ ] Channel points menu — click points counter to open rewards menu for redeeming
 - [x] Predictions — display and interact with channel predictions (GQL polling + MakePrediction mutation, collapsible banner + panel UI)
 - [ ] Polls — display and interact with channel polls
