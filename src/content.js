@@ -61,8 +61,6 @@ let predictionPanel = null;
 let predictionCountdown = null;
 let predictionCountdownEl = null;
 let predictionCountdownDeadline = 0;
-let pointsPubSub = false;
-let pointsFallbackTimer = null;
 let pinnedMessage = null;
 let pinnedBanner = null;
 let pinnedPanel = null;
@@ -148,13 +146,10 @@ function connectPort() {
     if (msg.type === "prediction-result") {
       if (!msg.success) updatePredictionUI(); // re-enable bet buttons on failure
     }
-    if (msg.type === "channel-points") {
-      pointsPubSub = true;
-      if (pointsFallbackTimer) { clearTimeout(pointsFallbackTimer); pointsFallbackTimer = null; }
-      updatePoints(formatPredPoints(msg.balance));
-    }
     if (msg.type === "pinned-message") {
-      handlePinnedMessageUpdate(msg.data);
+      pinnedMessage = msg.pin;
+      pinnedDismissed = false;
+      updatePinnedUI();
     }
   });
 
@@ -627,7 +622,7 @@ function updatePoints(text) {
 }
 
 function pollChannelPoints() {
-  if (vodId || !currentChannel || pointsPubSub) return;
+  if (vodId || !currentChannel) return;
   const el = document.querySelector('.community-points-summary');
   if (!el) { updatePoints(null); return; }
   for (const child of el.querySelectorAll('span')) {
@@ -1220,17 +1215,7 @@ function clearPredictionState() {
 }
 
 // --- Pinned Messages ---
-function handlePinnedMessageUpdate(payload) {
-  const type = payload?.type;
-  if (type === "pin-message" || type === "update-message") {
-    pinnedMessage = payload?.data?.message || payload?.data || payload;
-    pinnedDismissed = false;
-    updatePinnedUI();
-  } else if (type === "unpin-message") {
-    pinnedMessage = null;
-    updatePinnedUI();
-  }
-}
+// pin shape from background GQL: { id, type, startsAt, endsAt, pinnedBy: { displayName }, sender: { displayName, chatColor, badges }, text }
 
 function clearPinnedCountdown() {
   if (pinnedCountdown) { clearInterval(pinnedCountdown); pinnedCountdown = null; }
@@ -1270,36 +1255,34 @@ function updatePinnedUI() {
   pinnedBanner.classList.remove("cvs-hidden");
   pinnedBanner.innerHTML = "";
 
-  // Pin icon
+  const pin = pinnedMessage;
+
+  // Pin icon (SVG)
   const icon = document.createElement("span");
-  icon.textContent = "\uD83D\uDCCC";
-  icon.style.flexShrink = "0";
+  icon.className = "cvs-pin-icon";
+  icon.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14"><path fill="currentColor" d="M12 1.5a.5.5 0 0 0-.854-.354L8.354 3.854a.5.5 0 0 1-.708 0L6.354 2.561A.5.5 0 0 0 5.5 2.915V7.5a.5.5 0 0 1-.146.354l-3 3A.5.5 0 0 0 2.707 12H7v6.5a.5.5 0 0 0 1 0V12h4.293a.5.5 0 0 0 .353-.854l-3-3A.5.5 0 0 1 9.5 7.5V3.915a.5.5 0 0 0-.146-.354"/></svg>';
   pinnedBanner.appendChild(icon);
 
-  // Username
-  const pin = pinnedMessage;
-  const sender = pin.sender || pin.pinned_by || {};
-  const displayName = sender.display_name || sender.login || "Unknown";
+  // Username (message sender)
+  const sender = pin.sender || {};
   const userSpan = document.createElement("span");
   userSpan.className = "cvs-pin-user";
-  userSpan.textContent = displayName;
-  if (sender.chat_color) userSpan.style.color = sender.chat_color;
+  userSpan.textContent = sender.displayName || "Unknown";
+  if (sender.chatColor) userSpan.style.color = sender.chatColor;
   pinnedBanner.appendChild(userSpan);
 
-  // Message text (truncated)
-  const msgText = pin.message?.text || pin.content?.text || "";
+  // Message text (truncated in banner)
   const titleSpan = document.createElement("span");
   titleSpan.className = "cvs-pin-title";
-  titleSpan.textContent = msgText;
-  titleSpan.title = msgText;
+  titleSpan.textContent = pin.text;
+  titleSpan.title = pin.text;
   pinnedBanner.appendChild(titleSpan);
 
-  // Timer if ends_at present
-  const endsAt = pin.ends_at || pin.expires_at;
-  if (endsAt) {
+  // Timer if endsAt present
+  if (pin.endsAt) {
     const timerSpan = document.createElement("span");
     timerSpan.className = "cvs-pin-timer";
-    startPinnedCountdown(timerSpan, endsAt);
+    startPinnedCountdown(timerSpan, pin.endsAt);
     pinnedBanner.appendChild(timerSpan);
   }
 
@@ -1321,9 +1304,8 @@ function updatePinnedUI() {
     pinnedPanel.classList.remove("cvs-hidden");
     pinnedPanel.innerHTML = "";
     const body = document.createElement("div");
-    body.className = "cvs-body";
-    body.style.fontSize = "13px";
-    body.textContent = msgText;
+    body.className = "cvs-pin-body";
+    body.textContent = pin.text;
     pinnedPanel.appendChild(body);
   } else if (pinnedPanel) {
     pinnedPanel.classList.add("cvs-hidden");
@@ -1538,15 +1520,12 @@ function handleIRCMessage(msg) {
       const line = document.createElement("div");
       line.className = "cvs-line cvs-line-sub";
       line.dataset.user = msg.username;
-      const eventBar = document.createElement("div");
-      eventBar.className = "cvs-meta-bar";
-      eventBar.textContent = `Gifting ${count} ${tier} sub${count !== 1 ? "s" : ""}!`;
+      appendUserChrome(line, msg);
+      line.appendChild(document.createTextNode(` is gifting ${count} ${tier} sub${count !== 1 ? "s" : ""}! `));
       const toggle = document.createElement("span");
       toggle.className = "cvs-gift-toggle";
       toggle.textContent = "\u25B8";
-      eventBar.appendChild(toggle);
-      line.appendChild(eventBar);
-      appendEventUserLine(line, msg);
+      line.appendChild(toggle);
       const names = document.createElement("div");
       names.className = "cvs-gift-names cvs-hidden";
       line.appendChild(names);
@@ -1565,9 +1544,8 @@ function handleIRCMessage(msg) {
       const recipient = msg.tags?.["msg-param-recipient-display-name"] || msg.tags?.["msg-param-recipient-user-name"] || "someone";
       const pending = pendingMysteryGifts[msg.username];
       if (pending && pending.remaining > 0) {
-        const nameEl = document.createElement("div");
-        nameEl.textContent = recipient;
-        pending.namesEl.appendChild(nameEl);
+        const sep = pending.namesEl.children.length > 0 ? ", " : "";
+        pending.namesEl.appendChild(document.createTextNode(sep + recipient));
         pending.remaining--;
         if (pending.remaining <= 0) delete pendingMysteryGifts[msg.username];
         if (autoScroll) scrollIfNeeded();
@@ -1576,11 +1554,8 @@ function handleIRCMessage(msg) {
       const line = document.createElement("div");
       line.className = "cvs-line cvs-line-sub";
       line.dataset.user = msg.username;
-      const eventBar = document.createElement("div");
-      eventBar.className = "cvs-meta-bar";
-      eventBar.textContent = `Gifted a ${tier} sub to ${recipient}`;
-      line.appendChild(eventBar);
-      appendEventUserLine(line, msg);
+      appendUserChrome(line, msg);
+      line.appendChild(document.createTextNode(` gifted a ${tier} sub to ${recipient}`));
       queueLine(line);
       return;
     }
@@ -1595,16 +1570,21 @@ function handleIRCMessage(msg) {
       : noticeId === "raid" ? " cvs-line-raid" : "";
     line.className = "cvs-line" + accentClass;
     line.dataset.user = msg.username;
-    const eventBar = document.createElement("div");
-    eventBar.className = "cvs-meta-bar";
     let eventText = sysMsg;
     if (eventText.startsWith(displayName + " ")) {
       eventText = eventText.slice(displayName.length + 1);
       eventText = eventText.charAt(0).toUpperCase() + eventText.slice(1);
     }
-    eventBar.textContent = eventText;
-    line.appendChild(eventBar);
-    appendEventUserLine(line, msg, msg.trailing);
+    if (msg.trailing) {
+      const eventBar = document.createElement("div");
+      eventBar.className = "cvs-meta-bar";
+      eventBar.textContent = eventText;
+      line.appendChild(eventBar);
+      appendEventUserLine(line, msg, msg.trailing);
+    } else {
+      appendUserChrome(line, msg);
+      line.appendChild(document.createTextNode(" " + eventText));
+    }
     queueLine(line);
     return;
   }
@@ -1703,6 +1683,14 @@ function renderMessageBody(container, text, emotesTag) {
           mention.textContent = word;
           mention.dataset.user = login;
           container.appendChild(mention);
+        } else if (/^https?:\/\/\S+$/i.test(word) || /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?:[\/\?#]\S*)?$/i.test(word)) {
+          const a = document.createElement("a");
+          a.href = /^https?:\/\//i.test(word) ? word : "https://" + word;
+          a.textContent = word;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          a.className = "cvs-link";
+          container.appendChild(a);
         } else {
           container.appendChild(document.createTextNode(word));
         }
@@ -2307,8 +2295,6 @@ function pollChannel() {
     closeThread();
     clearPredictionState();
     clearPinnedState();
-    pointsPubSub = false;
-    if (pointsFallbackTimer) { clearTimeout(pointsFallbackTimer); pointsFallbackTimer = null; }
     updatePoints(null);
   }
 }

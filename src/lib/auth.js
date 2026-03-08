@@ -2,7 +2,7 @@
 // Register your app at https://dev.twitch.tv/console/apps
 // Set redirect URL to the value of chrome.identity.getRedirectURL()
 export const CLIENT_ID = "8nt0ugk7fjossuquolsvewm056awxo";
-const SCOPES = "chat:read chat:edit";
+const SCOPES = "chat:read chat:edit channel:read:predictions channel:read:polls";
 const AUTH_BASE = "https://id.twitch.tv/oauth2";
 
 export async function launchOAuthFlow() {

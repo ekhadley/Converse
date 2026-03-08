@@ -19,15 +19,17 @@ let joinedChannels = new Set();
 let ports = []; // connected content script ports
 let currentAccount = null; // { login, userId, token }
 let predictionPolls = {}; // channel -> { timer, lastPrediction }
-
-// --- PubSub state ---
-let pubsubSocket = null;
-let pubsubReady = false;
-let pubsubReconnectDelay = 1000;
-let pubsubPingInterval = null;
-let pubsubPongReceived = true;
-let pubsubTopics = new Map(); // topic -> { channel, handler }
+let pinnedPolls = {}; // channel -> { timer, lastJSON }
 let channelUserIds = {}; // channelLogin -> numericUserId
+
+// --- EventSub state ---
+let eventSubSocket, eventSubSessionId, eventSubReconnectDelay = 1000;
+let eventSubKeepaliveTimeout, eventSubKeepaliveSeconds = 10;
+let eventSubSubscriptions = {}; // subId -> { type, channel }
+let eventSubChannelSubs = {}; // channel -> [subIds]
+let eventSubReady = false, eventSubHasScopes = false;
+let eventSubOldSocket = null; // during session_reconnect transition
+let userPredictions = {}; // predictionId -> { outcomeId, points }
 
 async function getSettings() {
   const { settings } = await chrome.storage.local.get("settings");
@@ -122,125 +124,6 @@ function startIRCPing() {
   }, 60000);
 }
 
-// --- PubSub ---
-function connectPubSub() {
-  if (!currentAccount) return;
-  if (pubsubSocket && pubsubSocket.readyState <= 1) return;
-
-  pubsubSocket = new WebSocket("wss://pubsub-edge.twitch.tv");
-  pubsubReady = false;
-
-  pubsubSocket.onopen = () => {
-    pubsubReady = true;
-    pubsubReconnectDelay = 1000;
-    startPubSubPing();
-    // Re-LISTEN all topics
-    for (const [topic] of pubsubTopics) pubsubSendListen(topic);
-  };
-
-  pubsubSocket.onmessage = (event) => {
-    const frame = JSON.parse(event.data);
-    if (frame.type === "PONG") { pubsubPongReceived = true; return; }
-    if (frame.type === "RECONNECT") { pubsubSocket.close(); return; }
-    if (frame.type === "RESPONSE") {
-      if (frame.error) console.error("PubSub LISTEN error:", frame.error, frame.nonce);
-      return;
-    }
-    if (frame.type === "MESSAGE") {
-      const entry = pubsubTopics.get(frame.data.topic);
-      if (entry) {
-        try { entry.handler(JSON.parse(frame.data.message), entry.channel); }
-        catch (e) { console.error("PubSub handler error:", e); }
-      }
-    }
-  };
-
-  pubsubSocket.onclose = () => {
-    pubsubReady = false;
-    clearInterval(pubsubPingInterval);
-    pubsubPingInterval = null;
-    setTimeout(() => {
-      pubsubReconnectDelay = Math.min(pubsubReconnectDelay * 2, 30000);
-      connectPubSub();
-    }, pubsubReconnectDelay);
-  };
-
-  pubsubSocket.onerror = () => { pubsubSocket.close(); };
-}
-
-function startPubSubPing() {
-  clearInterval(pubsubPingInterval);
-  pubsubPongReceived = true;
-  pubsubPingInterval = setInterval(() => {
-    if (!pubsubReady) return;
-    if (!pubsubPongReceived) {
-      console.warn("PubSub ping timeout, reconnecting");
-      pubsubSocket.close();
-      return;
-    }
-    pubsubPongReceived = false;
-    pubsubSocket.send(JSON.stringify({ type: "PING" }));
-  }, 240000); // 4 minutes
-}
-
-function pubsubSendListen(topic) {
-  if (!pubsubReady || !currentAccount) return;
-  pubsubSocket.send(JSON.stringify({
-    type: "LISTEN",
-    nonce: crypto.randomUUID(),
-    data: { topics: [topic], auth_token: currentAccount.token },
-  }));
-}
-
-function pubsubSendUnlisten(topic) {
-  if (!pubsubReady) return;
-  pubsubSocket.send(JSON.stringify({
-    type: "UNLISTEN",
-    nonce: crypto.randomUUID(),
-    data: { topics: [topic] },
-  }));
-}
-
-function pubsubSubscribe(topic, channel, handler) {
-  pubsubTopics.set(topic, { channel, handler });
-  pubsubSendListen(topic);
-}
-
-function pubsubUnsubscribe(topic) {
-  pubsubTopics.delete(topic);
-  pubsubSendUnlisten(topic);
-}
-
-function pubsubSubscribeChannel(channelUserId, channel) {
-  pubsubSubscribe(`pinned-chat-updates-v1.${channelUserId}`, channel, handlePinnedMessage);
-}
-
-function pubsubUnsubscribeChannel(channelUserId) {
-  pubsubUnsubscribe(`pinned-chat-updates-v1.${channelUserId}`);
-}
-
-// --- PubSub: Channel Points ---
-function subscribeUserPoints() {
-  if (!currentAccount) return;
-  pubsubSubscribe(`community-points-user-v1.${currentAccount.userId}`, null, handlePointsUpdate);
-}
-
-function handlePointsUpdate(payload) {
-  // payload.data contains the point balance update
-  const data = payload?.data;
-  if (!data) return;
-  const channelId = data.channel_id;
-  const balance = data.balance?.balance ?? data.point_gain?.total_points ?? null;
-  if (balance != null) {
-    broadcast({ type: "channel-points", channelId, balance });
-  }
-}
-
-// --- PubSub: Pinned Messages ---
-function handlePinnedMessage(payload, channel) {
-  broadcast({ type: "pinned-message", data: payload }, channel);
-}
-
 function joinChannel(channel) {
   if (joinedChannels.has(channel)) return;
   joinedChannels.add(channel);
@@ -272,9 +155,10 @@ function broadcast(msg, channel) {
 // --- GQL ---
 const GQL_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const GQL_VOD_HASH = "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a";
-const GQL_REWARDS_HASH = "1530a003a7d374b0380b79db0be0534f30ff46e61cffa2bc0e2468a909fbc024";
-const GQL_PREDICTIONS_HASH = "f1dd49dc28cd5bcdcab31b5eaf57a2415f190b9bf6c1dc9ad4a8be579b55bfc8";
+const GQL_REWARDS_HASH = "7fe050e3761eb2cf258d70ee1a21cbd76fa8cf3d7e7b12fc437e7029d446b5e3";
+const GQL_PREDICTIONS_HASH = "beb846598256b75bd7c1fe54a80431335996153e358ca9c7837ce7bb83d7d383";
 const GQL_MAKE_PREDICTION_HASH = "b44682ecc88358817009f20e69d75081b1e58825bb40aa53d5dbadcc17c881d8";
+const GQL_PINNED_CHAT_HASH = "2d099d4c9b6af80a07d8440140c4f3dbb04d516b35c401aab7ce8f60765308d5";
 
 async function gqlFetch(body, { auth = false } = {}) {
   const headers = { "Client-Id": GQL_CLIENT_ID, "Content-Type": "application/json" };
@@ -291,7 +175,7 @@ async function fetchChannelRewards(channelLogin) {
   try {
     const data = await gqlFetch({
       operationName: "ChannelPointsContext",
-      variables: { channelLogin },
+      variables: { channelLogin, includeGoalTypes: ["CREATOR", "BOOST"] },
       extensions: { persistedQuery: { version: 1, sha256Hash: GQL_REWARDS_HASH } },
     });
     const rewards = data?.data?.community?.channel?.communityPointsSettings?.customRewards || [];
@@ -308,9 +192,9 @@ async function fetchPrediction(channelLogin) {
   try {
     const data = await gqlFetch({
       operationName: "ChannelPointsPredictionContext",
-      variables: { channelLogin },
+      variables: { count: 1, channelLogin },
       extensions: { persistedQuery: { version: 1, sha256Hash: GQL_PREDICTIONS_HASH } },
-    }, { auth: !!currentAccount });
+    }, currentAccount ? { auth: true } : {});
     // Navigate the response — exact path may vary, log on first success to verify
     const channel = data?.data?.community?.channel;
     if (!channel) return null;
@@ -384,6 +268,61 @@ function stopPredictionPoll(channel) {
   if (!poll) return;
   clearInterval(poll.timer);
   delete predictionPolls[channel];
+}
+
+// --- Pinned Chat GQL ---
+async function fetchPinnedChat(channelUserId) {
+  try {
+    const data = await gqlFetch({
+      operationName: "GetPinnedChat",
+      variables: { channelID: channelUserId, count: 1 },
+      extensions: { persistedQuery: { version: 1, sha256Hash: GQL_PINNED_CHAT_HASH } },
+    });
+    const node = data?.data?.channel?.pinnedChatMessages?.edges?.[0]?.node;
+    if (!node) return null;
+    const pm = node.pinnedMessage;
+    return {
+      id: node.id,
+      type: node.type,
+      startsAt: node.startsAt,
+      endsAt: node.endsAt,
+      pinnedBy: node.pinnedBy ? { displayName: node.pinnedBy.displayName } : null,
+      sender: pm?.sender ? {
+        displayName: pm.sender.displayName,
+        chatColor: pm.sender.chatColor,
+        badges: (pm.sender.displayBadges || []).map(b => b.setID + "/" + b.version),
+      } : null,
+      text: pm?.content?.text || "",
+    };
+  } catch (e) {
+    console.error("Failed to fetch pinned chat:", e);
+    return null;
+  }
+}
+
+function startPinnedPoll(channel) {
+  if (pinnedPolls[channel]) return;
+  const uid = channelUserIds[channel];
+  if (!uid) return;
+  const poll = { timer: null, lastJSON: null };
+  pinnedPolls[channel] = poll;
+  async function tick() {
+    if (!pinnedPolls[channel]) return;
+    const pin = await fetchPinnedChat(uid);
+    const json = JSON.stringify(pin);
+    if (json === poll.lastJSON) return;
+    poll.lastJSON = json;
+    broadcast({ type: "pinned-message", pin }, channel);
+  }
+  tick();
+  poll.timer = setInterval(tick, 30000);
+}
+
+function stopPinnedPoll(channel) {
+  const poll = pinnedPolls[channel];
+  if (!poll) return;
+  clearInterval(poll.timer);
+  delete pinnedPolls[channel];
 }
 
 async function fetchVodInfo(videoId) {
@@ -535,7 +474,7 @@ async function silentReauth() {
       const authUrl =
         `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}` +
         `&redirect_uri=${encodeURIComponent(redirectUrl)}` +
-        `&response_type=token&scope=${encodeURIComponent("chat:read chat:edit")}`;
+        `&response_type=token&scope=${encodeURIComponent("chat:read chat:edit channel:read:predictions channel:read:polls")}`;
       const responseUrl = await chrome.identity.launchWebAuthFlow({
         url: authUrl,
         interactive: false,
@@ -555,10 +494,8 @@ async function silentReauth() {
       }
       currentAccount = { ...currentAccount, token };
       if (ircSocket) ircSocket.close();
-      if (pubsubSocket) pubsubSocket.close();
       connectIRC();
-      connectPubSub();
-      subscribeUserPoints();
+      checkEventSubScopes().then(() => { disconnectEventSub(); connectEventSub(); });
       return true;
     } catch (e) {
       console.error("Silent re-auth failed:", e);
@@ -588,9 +525,255 @@ async function helixFetch(endpoint) {
   throw new Error(`Helix ${endpoint}: ${res.status}`);
 }
 
+async function helixPost(endpoint, body) {
+  if (!currentAccount) throw new Error("Not authenticated");
+  const doFetch = () =>
+    fetch(`https://api.twitch.tv/helix/${endpoint}`, {
+      method: "POST",
+      headers: { "Client-Id": CLIENT_ID, Authorization: `Bearer ${currentAccount.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const res = await doFetch();
+  if (res.ok) return res.json();
+  if (res.status === 401 && (await silentReauth())) {
+    const retry = await doFetch();
+    if (retry.ok) return retry.json();
+  }
+  throw new Error(`Helix POST ${endpoint}: ${res.status}`);
+}
+
+async function helixDelete(endpoint) {
+  if (!currentAccount) throw new Error("Not authenticated");
+  const doFetch = () =>
+    fetch(`https://api.twitch.tv/helix/${endpoint}`, {
+      method: "DELETE",
+      headers: { "Client-Id": CLIENT_ID, Authorization: `Bearer ${currentAccount.token}` },
+    });
+  const res = await doFetch();
+  if (res.status === 204 || res.ok) return;
+  if (res.status === 401 && (await silentReauth())) {
+    const retry = await doFetch();
+    if (retry.status === 204 || retry.ok) return;
+  }
+  throw new Error(`Helix DELETE ${endpoint}: ${res.status}`);
+}
+
 async function getUserId(login) {
   const data = await helixFetch(`users?login=${login}`);
   return data.data?.[0]?.id || null;
+}
+
+// --- EventSub WebSocket ---
+async function checkEventSubScopes() {
+  if (!currentAccount) { eventSubHasScopes = false; return; }
+  const validation = await validateToken(currentAccount.token);
+  eventSubHasScopes = (validation?.scopes || []).includes("channel:read:predictions");
+}
+
+function connectEventSub(url) {
+  if (!currentAccount || !eventSubHasScopes) return;
+  const ws = new WebSocket(url || "wss://eventsub.wss.twitch.tv/ws");
+
+  ws.onopen = () => { eventSubReconnectDelay = 1000; };
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    const type = data.metadata?.message_type;
+
+    if (type === "session_welcome") {
+      eventSubSessionId = data.payload.session.id;
+      eventSubKeepaliveSeconds = data.payload.session.keepalive_timeout_seconds || 10;
+      resetEventSubKeepalive();
+      if (eventSubOldSocket) {
+        eventSubOldSocket.close();
+        eventSubOldSocket = null;
+      } else {
+        eventSubReady = true;
+        eventSubSocket = ws;
+        resubscribeAllEventSub();
+      }
+      return;
+    }
+
+    if (type === "session_keepalive" || type === "notification") resetEventSubKeepalive();
+
+    if (type === "session_reconnect") {
+      eventSubOldSocket = ws;
+      connectEventSub(data.payload.session.reconnect_url);
+      return;
+    }
+
+    if (type === "notification") {
+      handleEventSubNotification(data.metadata.subscription_type, data.payload);
+    }
+
+    if (type === "revocation") {
+      const sub = data.payload.subscription;
+      console.warn("EventSub revocation:", sub.type, sub.status);
+      const tracked = eventSubSubscriptions[sub.id];
+      if (tracked) {
+        delete eventSubSubscriptions[sub.id];
+        const subs = eventSubChannelSubs[tracked.channel];
+        if (subs) {
+          eventSubChannelSubs[tracked.channel] = subs.filter(id => id !== sub.id);
+          if (!eventSubChannelSubs[tracked.channel].length) {
+            delete eventSubChannelSubs[tracked.channel];
+            startPredictionPoll(tracked.channel);
+          }
+        }
+      }
+    }
+  };
+
+  ws.onclose = () => {
+    clearTimeout(eventSubKeepaliveTimeout);
+    if (ws === eventSubOldSocket) { eventSubOldSocket = null; return; }
+    eventSubReady = false;
+    eventSubSessionId = null;
+    eventSubSubscriptions = {};
+    eventSubChannelSubs = {};
+    for (const ch of joinedChannels) {
+      if (!predictionPolls[ch]) startPredictionPoll(ch);
+    }
+    setTimeout(() => {
+      eventSubReconnectDelay = Math.min(eventSubReconnectDelay * 2, 30000);
+      connectEventSub();
+    }, eventSubReconnectDelay);
+  };
+
+  ws.onerror = () => { ws.close(); };
+}
+
+function resetEventSubKeepalive() {
+  clearTimeout(eventSubKeepaliveTimeout);
+  eventSubKeepaliveTimeout = setTimeout(() => {
+    console.warn("EventSub keepalive timeout, reconnecting");
+    if (eventSubSocket) eventSubSocket.close();
+  }, (eventSubKeepaliveSeconds + 5) * 1000);
+}
+
+function disconnectEventSub() {
+  clearTimeout(eventSubKeepaliveTimeout);
+  eventSubReady = false;
+  eventSubSessionId = null;
+  eventSubSubscriptions = {};
+  eventSubChannelSubs = {};
+  if (eventSubOldSocket) { eventSubOldSocket.close(); eventSubOldSocket = null; }
+  if (eventSubSocket) { const ws = eventSubSocket; eventSubSocket = null; ws.close(); }
+}
+
+// --- EventSub subscription management ---
+async function eventSubSubscribe(type, version, condition, channel) {
+  if (!eventSubSessionId) return;
+  try {
+    const data = await helixPost("eventsub/subscriptions", {
+      type, version, condition,
+      transport: { method: "websocket", session_id: eventSubSessionId },
+    });
+    const sub = data.data?.[0];
+    if (sub) {
+      eventSubSubscriptions[sub.id] = { type, channel };
+      if (!eventSubChannelSubs[channel]) eventSubChannelSubs[channel] = [];
+      eventSubChannelSubs[channel].push(sub.id);
+    }
+  } catch (e) {
+    console.error(`EventSub subscribe ${type} failed:`, e);
+  }
+}
+
+async function eventSubUnsubscribeChannel(channel) {
+  const subIds = eventSubChannelSubs[channel];
+  if (!subIds) return;
+  delete eventSubChannelSubs[channel];
+  for (const id of subIds) {
+    delete eventSubSubscriptions[id];
+    helixDelete(`eventsub/subscriptions?id=${id}`).catch(e => console.error("EventSub unsub failed:", e));
+  }
+}
+
+async function subscribeChannelPredictions(channel, broadcasterId) {
+  const cond = { broadcaster_user_id: broadcasterId };
+  await Promise.all([
+    eventSubSubscribe("channel.prediction.begin", "1", cond, channel),
+    eventSubSubscribe("channel.prediction.progress", "1", cond, channel),
+    eventSubSubscribe("channel.prediction.lock", "1", cond, channel),
+    eventSubSubscribe("channel.prediction.end", "1", cond, channel),
+  ]);
+}
+
+// Stub — subscribe logic ready, no UI yet
+async function subscribeChannelPolls(_channel, _broadcasterId) {}
+
+async function resubscribeAllEventSub() {
+  for (const ch of joinedChannels) {
+    const uid = channelUserIds[ch];
+    if (!uid) continue;
+    await subscribeChannelPredictions(ch, uid);
+    stopPredictionPoll(ch);
+  }
+}
+
+// --- EventSub notification handling ---
+function handleEventSubNotification(subscriptionType, payload) {
+  if (subscriptionType.startsWith("channel.prediction.")) {
+    const event = payload.event;
+    const channel = Object.keys(channelUserIds).find(ch => channelUserIds[ch] === event.broadcaster_user_id);
+    if (channel) handlePredictionEvent(subscriptionType, event, channel);
+  }
+}
+
+function handlePredictionEvent(subscriptionType, event, channel) {
+  const prediction = normalizeEventSubPrediction(subscriptionType, event);
+  const cached = userPredictions[prediction.id];
+  if (cached) prediction.userPrediction = cached;
+
+  if (subscriptionType === "channel.prediction.end") {
+    const endEvent = prediction.status === "CANCELED" ? "canceled" : "resolved";
+    broadcast({ type: "prediction-event", event: endEvent, prediction }, channel);
+    delete userPredictions[prediction.id];
+  } else {
+    const eventMap = {
+      "channel.prediction.begin": "started",
+      "channel.prediction.lock": "locked",
+    };
+    if (eventMap[subscriptionType]) broadcast({ type: "prediction-event", event: eventMap[subscriptionType], prediction }, channel);
+  }
+
+  broadcast({ type: "prediction-update", prediction }, channel);
+
+  if (subscriptionType === "channel.prediction.begin" && currentAccount) {
+    fetchPrediction(channel).then(gqlPred => {
+      if (gqlPred?.userPrediction) userPredictions[gqlPred.id] = gqlPred.userPrediction;
+    }).catch(() => {});
+  }
+}
+
+function normalizeEventSubPrediction(subscriptionType, event) {
+  const statusMap = {
+    "channel.prediction.begin": "ACTIVE",
+    "channel.prediction.progress": "ACTIVE",
+    "channel.prediction.lock": "LOCKED",
+    "channel.prediction.end": event.status === "canceled" ? "CANCELED" : "RESOLVED",
+  };
+  const outcomes = (event.outcomes || []).map(o => ({
+    id: o.id,
+    title: o.title,
+    color: o.color?.toUpperCase() || "BLUE",
+    totalPoints: o.channel_points || 0,
+    totalUsers: o.users || 0,
+  }));
+  return {
+    id: event.id,
+    title: event.title,
+    status: statusMap[subscriptionType] || "ACTIVE",
+    createdAt: event.started_at,
+    lockedAt: event.locked_at || null,
+    endedAt: event.ended_at || null,
+    predictionWindowSeconds: event.prediction_window || 120,
+    outcomes,
+    winningOutcomeId: event.winning_outcome_id || null,
+    userPrediction: null,
+  };
 }
 
 // --- Port management ---
@@ -604,6 +787,7 @@ chrome.runtime.onConnect.addListener((port) => {
       // Store port's channel for cleanup
       port._channel = channel;
       joinChannel(channel);
+      // Prediction poll starts as GQL fallback; stopped if EventSub takes over below
       startPredictionPoll(channel);
 
       // Send account info
@@ -624,7 +808,11 @@ chrome.runtime.onConnect.addListener((port) => {
         const userId = await getUserId(channel);
         if (userId) {
           channelUserIds[channel] = userId;
-          pubsubSubscribeChannel(userId, channel);
+          startPinnedPoll(channel);
+          if (eventSubHasScopes && eventSubReady) {
+            subscribeChannelPredictions(channel, userId);
+            stopPredictionPoll(channel);
+          }
           const [badges, emotes, recentMessages, rewards] = await Promise.all([
             fetchBadges(helixFetch, userId),
             fetchAllEmotes(userId),
@@ -702,12 +890,12 @@ chrome.runtime.onConnect.addListener((port) => {
             extensions: { persistedQuery: { version: 1, sha256Hash: GQL_MAKE_PREDICTION_HASH } },
           }, { auth: true });
           port.postMessage({ type: "prediction-result", success: true });
-          // Force an immediate poll to update userPrediction state
-          const poll = predictionPolls[port._channel];
-          if (poll) {
-            const prediction = await fetchPrediction(port._channel);
-            poll.lastPrediction = prediction;
-            poll.lastJSON = JSON.stringify(prediction);
+          // Force-fetch to update userPrediction state
+          const prediction = await fetchPrediction(port._channel);
+          if (prediction) {
+            if (prediction.userPrediction) userPredictions[prediction.id] = prediction.userPrediction;
+            const poll = predictionPolls[port._channel];
+            if (poll) { poll.lastPrediction = prediction; poll.lastJSON = JSON.stringify(prediction); }
             broadcast({ type: "prediction-update", prediction }, port._channel);
           }
         } catch (e) {
@@ -746,8 +934,8 @@ chrome.runtime.onConnect.addListener((port) => {
       if (!stillWatched) {
         partChannel(port._channel);
         stopPredictionPoll(port._channel);
-        const uid = channelUserIds[port._channel];
-        if (uid) pubsubUnsubscribeChannel(uid);
+        stopPinnedPoll(port._channel);
+        eventSubUnsubscribeChannel(port._channel);
       }
     }
   });
@@ -766,7 +954,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const authUrl =
           `https://id.twitch.tv/oauth2/authorize?client_id=${CLIENT_ID}` +
           `&redirect_uri=${encodeURIComponent(redirectUrl)}` +
-          `&response_type=token&scope=${encodeURIComponent("chat:read chat:edit")}&force_verify=true`;
+          `&response_type=token&scope=${encodeURIComponent("chat:read chat:edit channel:read:predictions channel:read:polls")}&force_verify=true`;
 
         const responseUrl = await chrome.identity.launchWebAuthFlow({
           url: authUrl,
@@ -794,13 +982,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         else accounts.push(account);
         await chrome.storage.local.set({ accounts });
 
-        // Reconnect IRC + PubSub with new account
+        // Reconnect IRC + EventSub with new account
         currentAccount = account;
         if (ircSocket) ircSocket.close();
-        if (pubsubSocket) pubsubSocket.close();
         connectIRC();
-        connectPubSub();
-        subscribeUserPoints();
+        disconnectEventSub();
+        checkEventSubScopes().then(() => connectEventSub());
         broadcast({
           type: "account-info",
           account: { login: account.login, userId: account.userId },
@@ -826,10 +1013,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     (async () => {
       currentAccount = await getActiveAccount();
       if (ircSocket) ircSocket.close();
-      if (pubsubSocket) pubsubSocket.close();
       connectIRC();
-      connectPubSub();
-      if (currentAccount) subscribeUserPoints();
+      disconnectEventSub();
+      checkEventSubScopes().then(() => connectEventSub());
       broadcast({
         type: "account-info",
         account: currentAccount
@@ -846,8 +1032,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 async function init() {
   currentAccount = await getActiveAccount();
   connectIRC();
-  connectPubSub();
-  if (currentAccount) subscribeUserPoints();
+  await checkEventSubScopes();
+  connectEventSub();
 }
 
 init();

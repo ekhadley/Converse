@@ -320,6 +320,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [ ] Channel points menu — click points counter to open rewards menu for redeeming
 - [x] Predictions — display and interact with channel predictions (GQL polling + MakePrediction mutation, collapsible banner + panel UI)
 - [ ] Polls — display and interact with channel polls
+- [x] Links in chat — render clickable hyperlinks in chat messages
 
 ## Icons
 All icons are inline SVGs using Font Awesome 6 Free Solid paths (no FA CSS/fonts bundled). In-chat settings: `fa-gear`. Popup header: `fa-wrench` (opens `chrome://extensions`), `fa-rotate-right` (reload extension). Both sets of action buttons are also in the in-chat settings panel footer.
