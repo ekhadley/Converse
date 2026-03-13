@@ -12,7 +12,7 @@ A Chrome extension that replaces Twitch's native chat with a custom container. M
 - `src/lib/auth.js` — OAuth helpers, account CRUD in `chrome.storage.local`.
 - `src/lib/irc.js` — TMI IRC message parser (tags, prefix, command, channel, trailing, username).
 - `src/lib/badges.js` — Fetches global + channel badges from Helix API. Global cached in memory. Channel overrides global. Returns map of `"set_id/version" -> { url, url4x, title }`.
-- `src/lib/emotes.js` — Fetches 7TV, BTTV, FFZ emotes (global + channel). Cached in `chrome.storage.local` with TTLs (6h global, 1h channel) and a `CACHE_VERSION` — bump the version when the emote data structure changes to auto-invalidate stale cache entries. Priority on name collision: 7TV > BTTV > FFZ. Each provider fetch is wrapped in `safe()` so one failure doesn't break all emotes.
+- `src/lib/emotes.js` — Fetches 7TV, BTTV, FFZ emotes (global + channel). Cached in `chrome.storage.local` with TTLs (6h global, 1h channel) and a `CACHE_VERSION` — bump the version when the emote data structure changes to auto-invalidate stale cache entries. Priority on name collision: 7TV > BTTV > FFZ. Each provider fetch is wrapped in `safe()` so one failure doesn't break all emotes. `clearEmoteCache(userId)` removes all 6 cache keys for manual refresh.
 - `src/lib/settings.js` — Shared `DEFAULT_SETTINGS` object imported by background.js and popup.js.
 
 ## Architecture
@@ -43,7 +43,7 @@ Single WebSocket to `wss://eventsub.wss.twitch.tv/ws`. Twitch's official real-ti
 
 **Integration points:** EventSub socket is connected/reconnected alongside IRC in `init()`, `add-account`, `account-changed`, and `silentReauth()`. Exponential backoff reconnect (1s→30s), same pattern as IRC. On disconnect, GQL polling resumes for all channels as fallback.
 
-**Race condition:** If `channel-changed` fires before EventSub welcome, GQL polling starts as fallback. When `resubscribeAllEventSub()` runs after welcome, it subscribes and stops the GQL poll — clean handoff, no duplicates.
+**Race condition:** If `channel-changed` fires before EventSub welcome, GQL polling starts as fallback. When `resubscribeAllEventSub()` runs after welcome, it subscribes and stops the GQL poll — clean handoff, no duplicates. GQL poll is only stopped after subscription is confirmed (`.then()` check on `eventSubChannelSubs[ch]?.length`).
 
 ### Channel Detection
 `getChannel()` parses `location.pathname` for a channel name, excluding known non-channel paths (directory, settings, payments, videos, etc.). Polled every 1.5s + on MutationObserver fires. On channel change: clears messages, clears `seenMsgIds`, resets `messageBuffer`, closes usercard. When navigating away from a channel (channel becomes null), resize CSS overrides are cleared so Twitch can manage the player (mini-player, PiP, etc.).
@@ -57,7 +57,7 @@ On channel join, fetches backfill from `recent-messages.robotty.de`. Deduplicati
 ## Features
 
 ### Emote Rendering
-Twitch emotes parsed from IRC `emotes` tag (position-based). Third-party emotes matched by word against the `thirdPartyEmotes` map (populated from background on channel join). Each provider individually toggleable in settings. Zero-width emotes (7TV `flags & 1`) are stacked onto the preceding emote via `.cvs-emote-stack` wrappers with absolute positioning. Messages are rendered via RAF-batched `queueLine()` / `flushMessages()` for performance.
+Twitch emotes parsed from IRC `emotes` tag (position-based). Third-party emotes matched by word against the `thirdPartyEmotes` map (populated from background on channel join). Each provider individually toggleable in settings. Zero-width emotes (7TV `flags & 1`) are stacked onto the preceding emote via `.cvs-emote-stack` wrappers with absolute positioning. Messages are rendered via RAF-batched `queueLine()` / `flushMessages()` for performance. Manual refresh button in settings panel actions row clears all emote cache keys via `clearEmoteCache()` and re-fetches — content script receives `emotes-refreshed` and updates `thirdPartyEmotes` in place.
 
 ### Emote Tooltip
 Hover an emote to see a 3x preview, name, provider label (7TV/BetterTTV/FrankerFaceZ/Twitch), and scope (Native/Channel/Global). Positioned above the emote, flips below if clipped at top, clamped horizontally. The tooltip img is wrapped in `.cvs-tooltip-img-wrap`; while the 3x image loads, `cvs-tooltip-loading` on the tooltip hides the img and shows a CSS spinner via `::after` on the wrapper. Cached images skip the spinner (`img.complete` check).
@@ -72,6 +72,9 @@ Click a username to open a card showing avatar, display name, account creation d
 
 ### Chat Collapse / Extension Toggle
 Controlled via `hideChat` and `useNativeChat` settings in `chrome.storage.local`. `hideChat` collapses the chat column to width 0 with CSS overrides (mode-aware, same as resize). `useNativeChat` removes the `cvs-active` class from the chat-shell, showing Twitch's native chat. Both are togglable from the in-chat settings panel and the extension popup. Starting a resize drag clears `hideChat`. `applyChatVisibility()` reads these settings and applies the appropriate state.
+
+### Fullscreen Chat
+`f` key or Twitch's fullscreen button triggers `document.documentElement.requestFullscreen()` — browser-level fullscreen with chat visible. If not already in theatre mode, theatre is activated first (resize CSS handles the layout). `wasTheatreBeforeFs` tracks whether to restore normal mode on exit. `fullscreenchange` listener restores normal mode via `clickTheatreBtn()` after a 200ms delay. Additional keyboard shortcuts captured on the capture phase: `t` toggles theatre, `m` toggles mute, `Space` toggles play/pause. `Alt+T` in our fullscreen exits fullscreen instead of toggling theatre. Twitch's native fullscreen button click is intercepted on capture phase and redirected to `toggleFullscreenChat()`.
 
 ### Auto-scroll / Pause Bar
 Chat auto-scrolls to bottom. When user scrolls up (>30px from bottom), `autoScroll` is set false and the "Chat paused" bar appears as an absolute-positioned overlay above the input (does not reserve vertical space or push messages). Clicking the bar or scrolling back to bottom resumes.
@@ -333,7 +336,7 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 - [x] Links in chat — render clickable hyperlinks in chat messages
 
 ## Icons
-All icons are inline SVGs using Font Awesome 6 Free Solid paths (no FA CSS/fonts bundled). In-chat settings: `fa-gear`. Popup header: `fa-wrench` (opens `chrome://extensions`), `fa-rotate-right` (reload extension). Both sets of action buttons are also in the in-chat settings panel footer.
+All icons are inline SVGs using Font Awesome 6 Free Solid paths (no FA CSS/fonts bundled). In-chat settings: `fa-gear`. Popup header: `fa-wrench` (opens `chrome://extensions`), `fa-rotate-right` (reload extension). In-chat settings footer: `fa-arrows-rotate` (refresh emotes), plus the same wrench and rotate buttons. Both sets of action buttons are also in the in-chat settings panel footer.
 
 ## Extension Reload Rules
 - Content script / CSS changes: just reload the Twitch tab.
