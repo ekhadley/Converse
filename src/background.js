@@ -6,7 +6,7 @@ import {
 } from "./lib/auth.js";
 import { parseIRCMessage } from "./lib/irc.js";
 import { fetchBadges } from "./lib/badges.js";
-import { fetchAllEmotes } from "./lib/emotes.js";
+import { fetchAllEmotes, clearEmoteCache } from "./lib/emotes.js";
 import { DEFAULT_SETTINGS } from "./lib/settings.js";
 
 // --- State ---
@@ -194,7 +194,7 @@ async function fetchPrediction(channelLogin) {
       operationName: "ChannelPointsPredictionContext",
       variables: { count: 1, channelLogin },
       extensions: { persistedQuery: { version: 1, sha256Hash: GQL_PREDICTIONS_HASH } },
-    }, currentAccount ? { auth: true } : {});
+    });
     // Navigate the response — exact path may vary, log on first success to verify
     const channel = data?.data?.community?.channel;
     if (!channel) return null;
@@ -539,7 +539,8 @@ async function helixPost(endpoint, body) {
     const retry = await doFetch();
     if (retry.ok) return retry.json();
   }
-  throw new Error(`Helix POST ${endpoint}: ${res.status}`);
+  const errBody = await res.text().catch(() => "");
+  throw new Error(`Helix POST ${endpoint}: ${res.status} ${errBody}`);
 }
 
 async function helixDelete(endpoint) {
@@ -709,7 +710,7 @@ async function resubscribeAllEventSub() {
     const uid = channelUserIds[ch];
     if (!uid) continue;
     await subscribeChannelPredictions(ch, uid);
-    stopPredictionPoll(ch);
+    if (eventSubChannelSubs[ch]?.length) stopPredictionPoll(ch);
   }
 }
 
@@ -810,8 +811,9 @@ chrome.runtime.onConnect.addListener((port) => {
           channelUserIds[channel] = userId;
           startPinnedPoll(channel);
           if (eventSubHasScopes && eventSubReady) {
-            subscribeChannelPredictions(channel, userId);
-            stopPredictionPoll(channel);
+            subscribeChannelPredictions(channel, userId).then(() => {
+              if (eventSubChannelSubs[channel]?.length) stopPredictionPoll(channel);
+            });
           }
           const [badges, emotes, recentMessages, rewards] = await Promise.all([
             fetchBadges(helixFetch, userId),
@@ -829,6 +831,21 @@ chrome.runtime.onConnect.addListener((port) => {
         }
       } catch (e) {
         console.error("Failed to fetch channel data:", e);
+      }
+    }
+
+    if (msg.type === "refresh-emotes") {
+      const channel = port._channel;
+      if (!channel || !currentAccount) return;
+      try {
+        const userId = channelUserIds[channel] || await getUserId(channel);
+        if (userId) {
+          await clearEmoteCache(userId);
+          const emotes = await fetchAllEmotes(userId);
+          port.postMessage({ type: "emotes-refreshed", emotes });
+        }
+      } catch (e) {
+        console.error("Failed to refresh emotes:", e);
       }
     }
 

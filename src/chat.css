@@ -826,18 +826,19 @@
 .cvs-line-prediction { border-left: 2px solid #e841bb; background: rgba(232, 65, 187, 0.08) !important; }
 .cvs-line-prediction .cvs-meta-bar { color: #e841bb; }
 
-.cvs-pred-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(232, 65, 187, 0.1); border-bottom: 1px solid rgba(232, 65, 187, 0.2); border-left: 3px solid #e841bb; cursor: pointer; user-select: none; font-size: 12px; }
+.cvs-pred-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(232, 65, 187, 0.15); backdrop-filter: blur(4px); border: 1px solid rgba(232, 65, 187, 0.3); border-radius: 8px; margin: 4px 8px 0; cursor: pointer; user-select: none; font-size: 12px; }
 .cvs-pred-banner.cvs-hidden { display: none; }
 .cvs-pred-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .cvs-pred-timer { flex-shrink: 0; font-variant-numeric: tabular-nums; color: #dedee3; }
-.cvs-pred-chevron { flex-shrink: 0; color: #898395; cursor: pointer; font-size: 14px; }
+.cvs-pred-chevron { flex-shrink: 0; color: #dedee3; cursor: pointer; font-size: 18px; font-weight: 600; }
 .cvs-pred-chevron:hover { color: #efeff1; }
 .cvs-pred-dismiss { flex-shrink: 0; background: none; border: none; color: #898395; cursor: pointer; font-size: 16px; padding: 0 2px; }
 .cvs-pred-dismiss:hover { color: #efeff1; }
 
-.cvs-pred-panel { flex-shrink: 0; padding: 8px 10px; border-bottom: 1px solid rgba(232, 65, 187, 0.2); border-left: 3px solid #e841bb; background: rgba(232, 65, 187, 0.06); max-height: 280px; overflow-y: auto; scrollbar-width: none; }
+.cvs-pred-panel { flex-shrink: 0; padding: 8px 10px; background: rgba(232, 65, 187, 0.08); backdrop-filter: blur(4px); border: 1px solid rgba(232, 65, 187, 0.3); border-top: none; border-radius: 0 0 8px 8px; margin: 0 8px; max-height: 280px; overflow-y: auto; scrollbar-width: none; }
 .cvs-pred-panel::-webkit-scrollbar { display: none; }
 .cvs-pred-panel.cvs-hidden { display: none; }
+.cvs-pred-banner:has(+ .cvs-pred-panel:not(.cvs-hidden)) { border-radius: 8px 8px 0 0; margin-bottom: 0; }
 
 .cvs-pred-outcome { margin-bottom: 8px; }
 .cvs-pred-outcome:last-child { margin-bottom: 0; }
@@ -858,17 +859,18 @@
 
 /* --- Pinned messages --- */
 
-.cvs-pin-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(56, 139, 255, 0.1); border-bottom: 1px solid rgba(56, 139, 255, 0.2); border-left: 3px solid #388bff; cursor: pointer; user-select: none; font-size: 12px; }
+.cvs-pin-banner { flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(56, 139, 255, 0.15); backdrop-filter: blur(4px); border: 1px solid rgba(56, 139, 255, 0.3); border-radius: 8px; margin: 4px 8px 0; cursor: pointer; user-select: none; font-size: 12px; }
 .cvs-pin-banner.cvs-hidden { display: none; }
 .cvs-pin-user { font-weight: 600; flex-shrink: 0; }
 .cvs-pin-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #dedee3; }
 .cvs-pin-timer { flex-shrink: 0; font-variant-numeric: tabular-nums; color: #dedee3; }
 .cvs-pin-dismiss { flex-shrink: 0; background: none; border: none; color: #898395; cursor: pointer; font-size: 16px; padding: 0 2px; }
 .cvs-pin-dismiss:hover { color: #efeff1; }
-.cvs-pin-chevron { flex-shrink: 0; color: #898395; font-size: 14px; }
+.cvs-pin-chevron { flex-shrink: 0; color: #dedee3; font-size: 18px; font-weight: 600; }
 .cvs-pin-chevron:hover { color: #efeff1; }
 
 .cvs-pin-icon { flex-shrink: 0; color: #388bff; display: flex; align-items: center; }
-.cvs-pin-panel { flex-shrink: 0; padding: 8px 10px; border-bottom: 1px solid rgba(56, 139, 255, 0.2); border-left: 3px solid #388bff; background: rgba(56, 139, 255, 0.06); }
+.cvs-pin-panel { flex-shrink: 0; padding: 8px 10px; background: rgba(56, 139, 255, 0.08); backdrop-filter: blur(4px); border: 1px solid rgba(56, 139, 255, 0.3); border-top: none; border-radius: 0 0 8px 8px; margin: 0 8px; }
 .cvs-pin-panel.cvs-hidden { display: none; }
+.cvs-pin-banner:has(+ .cvs-pin-panel:not(.cvs-hidden)) { border-radius: 8px 8px 0 0; margin-bottom: 0; }
 .cvs-pin-body { font-size: 13px; color: #dedee3; white-space: pre-wrap; word-break: break-word; }

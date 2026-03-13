@@ -69,6 +69,7 @@ let pinnedExpanded = false;
 let pinnedCountdown = null;
 let pinnedCountdownEl = null;
 let pinnedCountdownDeadline = 0;
+let wasTheatreBeforeFs = false;
 
 // --- Channel detection ---
 function getChannel() {
@@ -117,6 +118,9 @@ function connectPort() {
       thirdPartyEmotes = msg.emotes || {};
       channelRewards = msg.rewards || {};
       if (msg.settings) applySettings(msg.settings);
+    }
+    if (msg.type === "emotes-refreshed") {
+      thirdPartyEmotes = msg.emotes || {};
     }
     if (msg.type === "account-info") {
       account = msg.account;
@@ -476,8 +480,9 @@ function buildChatUI(shell) {
   // Extension actions
   const actionsRow = document.createElement("div");
   actionsRow.className = "cvs-settings-actions";
-  actionsRow.innerHTML = `<button title="Chrome extensions page"><svg width="12" height="12" viewBox="0 0 512 512" fill="currentColor"><path d="M352 320c88.4 0 160-71.6 160-160c0-15.3-2.2-30.1-6.2-44.2c-3.1-10.8-16.4-13.2-24.3-5.3l-76.8 76.8c-3 3-7.1 4.7-11.3 4.7L336 192c-8.8 0-16-7.2-16-16l0-57.4c0-4.2 1.7-8.3 4.7-11.3l76.8-76.8c7.9-7.9 5.4-21.2-5.3-24.3C382.1 2.2 367.3 0 352 0C263.6 0 192 71.6 192 160c0 19.1 3.4 37.5 9.5 54.5L19.9 396.1C7.2 408.8 0 426.1 0 444.1C0 481.6 30.4 512 67.9 512c18 0 35.3-7.2 48-19.9L297.5 310.5c17 6.2 35.4 9.5 54.5 9.5zM80 408a24 24 0 1 1 0 48 24 24 0 1 1 0-48z"/></svg></button><button title="Reload extension"><svg width="12" height="12" viewBox="0 0 512 512" fill="currentColor"><path d="M463.5 224l8.5 0c13.3 0 24-10.7 24-24l0-128c0-9.7-5.8-18.5-14.8-22.2s-19.3-1.7-26.2 5.2L413.4 96.6c-87.6-86.5-228.7-86.2-315.8 1c-87.5 87.5-87.5 229.3 0 316.8s229.3 87.5 316.8 0c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0c-62.5 62.5-163.8 62.5-226.3 0s-62.5-163.8 0-226.3c62.2-62.2 162.7-62.5 225.3-1L327 183c-6.9 6.9-8.9 17.2-5.2 26.2s12.5 14.8 22.2 14.8l119.5 0z"/></svg></button>`;
-  const [extBtn, reloadBtn] = actionsRow.querySelectorAll("button");
+  actionsRow.innerHTML = `<button title="Refresh emotes"><svg width="12" height="12" viewBox="0 0 512 512" fill="currentColor"><path d="M105.1 202.6c7.7-21.8 20.2-42.3 37.8-59.8c62.5-62.5 163.8-62.5 226.3 0L386.3 160 352 160c-17.7 0-32 14.3-32 32s14.3 32 32 32l111.5 0c0 0 0 0 0 0l.4 0c17.7 0 32-14.3 32-32l0-112c0-17.7-14.3-32-32-32s-32 14.3-32 32l0 35.2L414.4 97.6c-87.5-87.5-229.3-87.5-316.8 0C73.2 122 55.6 150.7 44.8 181.4c-5.9 16.7 2.9 34.9 19.5 40.8s34.9-2.9 40.8-19.5zM39 289.3c-5 1.5-9.8 4.2-13.7 8.2c-4 4-6.7 8.8-8.1 14c-.3 1.2-.6 2.5-.8 3.8c-.3 1.7-.4 3.4-.4 5.1L16 432c0 17.7 14.3 32 32 32s32-14.3 32-32l0-35.1 17.6 17.5c0 0 0 0 0 0c87.5 87.4 229.3 87.4 316.7 0c24.4-24.4 42.1-53.1 52.9-83.8c5.9-16.7-2.9-34.9-19.5-40.8s-34.9 2.9-40.8 19.5c-7.7 21.8-20.2 42.3-37.8 59.8c-62.5 62.5-163.8 62.5-226.3 0l-.1-.1L125.6 352l34.4 0c17.7 0 32-14.3 32-32s-14.3-32-32-32L48.4 288c-1.6 0-3.2 .1-4.8 .3s-3.1 .5-4.6 1z"/></svg></button><button title="Chrome extensions page"><svg width="12" height="12" viewBox="0 0 512 512" fill="currentColor"><path d="M352 320c88.4 0 160-71.6 160-160c0-15.3-2.2-30.1-6.2-44.2c-3.1-10.8-16.4-13.2-24.3-5.3l-76.8 76.8c-3 3-7.1 4.7-11.3 4.7L336 192c-8.8 0-16-7.2-16-16l0-57.4c0-4.2 1.7-8.3 4.7-11.3l76.8-76.8c7.9-7.9 5.4-21.2-5.3-24.3C382.1 2.2 367.3 0 352 0C263.6 0 192 71.6 192 160c0 19.1 3.4 37.5 9.5 54.5L19.9 396.1C7.2 408.8 0 426.1 0 444.1C0 481.6 30.4 512 67.9 512c18 0 35.3-7.2 48-19.9L297.5 310.5c17 6.2 35.4 9.5 54.5 9.5zM80 408a24 24 0 1 1 0 48 24 24 0 1 1 0-48z"/></svg></button><button title="Reload extension"><svg width="12" height="12" viewBox="0 0 512 512" fill="currentColor"><path d="M463.5 224l8.5 0c13.3 0 24-10.7 24-24l0-128c0-9.7-5.8-18.5-14.8-22.2s-19.3-1.7-26.2 5.2L413.4 96.6c-87.6-86.5-228.7-86.2-315.8 1c-87.5 87.5-87.5 229.3 0 316.8s229.3 87.5 316.8 0c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0c-62.5 62.5-163.8 62.5-226.3 0s-62.5-163.8 0-226.3c62.2-62.2 162.7-62.5 225.3-1L327 183c-6.9 6.9-8.9 17.2-5.2 26.2s12.5 14.8 22.2 14.8l119.5 0z"/></svg></button>`;
+  const [refreshEmotesBtn, extBtn, reloadBtn] = actionsRow.querySelectorAll("button");
+  refreshEmotesBtn.addEventListener("click", () => port?.postMessage({ type: "refresh-emotes" }));
   extBtn.addEventListener("click", () => chrome.runtime.sendMessage({ type: "open-extensions" }));
   reloadBtn.addEventListener("click", () => chrome.runtime.sendMessage({ type: "reload-extension" }));
   settingsPanel.appendChild(actionsRow);
@@ -934,6 +939,23 @@ function collapsedCSS() {
       padding-right: 0 !important;
     }
   `;
+}
+
+// --- Fullscreen chat ---
+// Intercept Twitch's fullscreen triggers BEFORE they fire so the user gesture
+// is preserved. Ensure theatre mode (resize already handles it), then
+// requestFullscreen on documentElement for browser-level fullscreen (no chrome).
+
+function isOurFullscreen() { return document.fullscreenElement === document.documentElement; }
+
+function clickTheatreBtn() { const b = document.querySelector('button[aria-label*="heatre"]'); if (b) b.click(); }
+
+function toggleFullscreenChat() {
+  if (isOurFullscreen()) { document.exitFullscreen(); return; }
+  if (!extensionEnabled) return;
+  wasTheatreBeforeFs = isTheatreMode();
+  if (!wasTheatreBeforeFs) clickTheatreBtn();
+  document.documentElement.requestFullscreen().catch(() => {});
 }
 
 // --- Reply mode ---
@@ -2338,6 +2360,34 @@ function init() {
     resizing = false;
     scrollIfNeeded();
   });
+
+  // Fullscreen chat: intercept Twitch triggers on capture phase so user gesture
+  // is preserved for our requestFullscreen call.
+  document.addEventListener("fullscreenchange", () => {
+    // Restore normal mode after exiting our fullscreen
+    if (!document.fullscreenElement && !wasTheatreBeforeFs && isTheatreMode()) {
+      setTimeout(clickTheatreBtn, 200);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (!currentChannel || !extensionEnabled) return;
+    const tag = e.target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable) return;
+    // Alt+T in our fullscreen: exit instead of toggling theatre
+    if (e.altKey && (e.key === "t" || e.key === "T") && isOurFullscreen()) {
+      e.preventDefault(); e.stopPropagation(); document.exitFullscreen(); return;
+    }
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === "f") { e.preventDefault(); e.stopPropagation(); toggleFullscreenChat(); }
+    else if (e.key === "t") { e.preventDefault(); e.stopPropagation(); clickTheatreBtn(); }
+    else if (e.key === "m") { e.preventDefault(); e.stopPropagation(); const v = document.querySelector("video"); if (v) v.muted = !v.muted; }
+    else if (e.key === " ") { e.preventDefault(); e.stopPropagation(); const v = document.querySelector("video"); if (v) { if (v.paused) v.play(); else v.pause(); } }
+  }, true);
+  document.addEventListener("click", (e) => {
+    if (e.target.closest('[data-a-target="player-fullscreen-button"]') && currentChannel && extensionEnabled) {
+      e.preventDefault(); e.stopPropagation(); toggleFullscreenChat();
+    }
+  }, true);
 
   // Also poll periodically as a fallback for SPA navigations
   setInterval(pollChannel, 1500);

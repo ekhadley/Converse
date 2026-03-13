@@ -147,6 +147,11 @@ async function fetchFFZChannel(userId) {
   return map;
 }
 
+export async function clearEmoteCache(userId) {
+  const keys = ["emotes_7tv_global", "emotes_bttv_global", "emotes_ffz_global", `emotes_7tv_${userId}`, `emotes_bttv_${userId}`, `emotes_ffz_${userId}`];
+  await chrome.storage.local.remove(keys);
+}
+
 // --- Unified fetch ---
 // Priority: 7TV > BTTV > FFZ (later spreads win on collision)
 export async function fetchAllEmotes(userId) {
