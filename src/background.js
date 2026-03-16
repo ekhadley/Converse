@@ -22,15 +22,6 @@ let predictionPolls = {}; // channel -> { timer, lastPrediction }
 let pinnedPolls = {}; // channel -> { timer, lastJSON }
 let channelUserIds = {}; // channelLogin -> numericUserId
 
-// --- EventSub state ---
-let eventSubSocket, eventSubSessionId, eventSubReconnectDelay = 1000;
-let eventSubKeepaliveTimeout, eventSubKeepaliveSeconds = 10;
-let eventSubSubscriptions = {}; // subId -> { type, channel }
-let eventSubChannelSubs = {}; // channel -> [subIds]
-let eventSubReady = false, eventSubHasScopes = false;
-let eventSubOldSocket = null; // during session_reconnect transition
-let userPredictions = {}; // predictionId -> { outcomeId, points }
-
 async function getSettings() {
   const { settings } = await chrome.storage.local.get("settings");
   return { ...DEFAULT_SETTINGS, ...settings };
@@ -195,10 +186,9 @@ async function fetchPrediction(channelLogin) {
       variables: { count: 1, channelLogin },
       extensions: { persistedQuery: { version: 1, sha256Hash: GQL_PREDICTIONS_HASH } },
     });
-    // Navigate the response — exact path may vary, log on first success to verify
     const channel = data?.data?.community?.channel;
     if (!channel) return null;
-    const event = channel.activePredictionEvent || channel.activePredictionEvents?.[0] || channel.communityPointsSettings?.activePredictionEvent;
+    const event = channel.activePredictionEvents?.[0] || channel.lockedPredictionEvents?.[0] || channel.resolvedPredictionEvents?.edges?.[0]?.node;
     if (!event) return null;
     return normalizePrediction(event);
   } catch (e) {
@@ -224,7 +214,7 @@ function normalizePrediction(event) {
     endedAt: event.endedAt || null,
     predictionWindowSeconds: event.predictionWindowSeconds ?? event.predictionWindow ?? 120,
     outcomes,
-    winningOutcomeId: event.winningOutcomeID || event.winningOutcomeId || null,
+    winningOutcomeId: event.winningOutcomeID || event.winningOutcomeId || event.winningOutcome?.id || null,
     userPrediction: null,
   };
   // Extract user's own prediction if present
@@ -245,6 +235,8 @@ function startPredictionPoll(channel) {
   async function tick() {
     if (!predictionPolls[channel]) return;
     const prediction = await fetchPrediction(channel);
+    // GQL activePredictionEvent returns null for locked predictions — preserve non-terminal state
+    if (!prediction && poll.lastPrediction && (poll.lastPrediction.status === "ACTIVE" || poll.lastPrediction.status === "LOCKED")) return;
     const json = JSON.stringify(prediction);
     if (json === poll.lastJSON) return;
     const prev = poll.lastPrediction;
@@ -495,7 +487,6 @@ async function silentReauth() {
       currentAccount = { ...currentAccount, token };
       if (ircSocket) ircSocket.close();
       connectIRC();
-      checkEventSubScopes().then(() => { disconnectEventSub(); connectEventSub(); });
       return true;
     } catch (e) {
       console.error("Silent re-auth failed:", e);
@@ -525,256 +516,9 @@ async function helixFetch(endpoint) {
   throw new Error(`Helix ${endpoint}: ${res.status}`);
 }
 
-async function helixPost(endpoint, body) {
-  if (!currentAccount) throw new Error("Not authenticated");
-  const doFetch = () =>
-    fetch(`https://api.twitch.tv/helix/${endpoint}`, {
-      method: "POST",
-      headers: { "Client-Id": CLIENT_ID, Authorization: `Bearer ${currentAccount.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  const res = await doFetch();
-  if (res.ok) return res.json();
-  if (res.status === 401 && (await silentReauth())) {
-    const retry = await doFetch();
-    if (retry.ok) return retry.json();
-  }
-  const errBody = await res.text().catch(() => "");
-  throw new Error(`Helix POST ${endpoint}: ${res.status} ${errBody}`);
-}
-
-async function helixDelete(endpoint) {
-  if (!currentAccount) throw new Error("Not authenticated");
-  const doFetch = () =>
-    fetch(`https://api.twitch.tv/helix/${endpoint}`, {
-      method: "DELETE",
-      headers: { "Client-Id": CLIENT_ID, Authorization: `Bearer ${currentAccount.token}` },
-    });
-  const res = await doFetch();
-  if (res.status === 204 || res.ok) return;
-  if (res.status === 401 && (await silentReauth())) {
-    const retry = await doFetch();
-    if (retry.status === 204 || retry.ok) return;
-  }
-  throw new Error(`Helix DELETE ${endpoint}: ${res.status}`);
-}
-
 async function getUserId(login) {
   const data = await helixFetch(`users?login=${login}`);
   return data.data?.[0]?.id || null;
-}
-
-// --- EventSub WebSocket ---
-async function checkEventSubScopes() {
-  if (!currentAccount) { eventSubHasScopes = false; return; }
-  const validation = await validateToken(currentAccount.token);
-  eventSubHasScopes = (validation?.scopes || []).includes("channel:read:predictions");
-}
-
-function connectEventSub(url) {
-  if (!currentAccount || !eventSubHasScopes) return;
-  const ws = new WebSocket(url || "wss://eventsub.wss.twitch.tv/ws");
-
-  ws.onopen = () => { eventSubReconnectDelay = 1000; };
-
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    const type = data.metadata?.message_type;
-
-    if (type === "session_welcome") {
-      eventSubSessionId = data.payload.session.id;
-      eventSubKeepaliveSeconds = data.payload.session.keepalive_timeout_seconds || 10;
-      resetEventSubKeepalive();
-      if (eventSubOldSocket) {
-        eventSubOldSocket.close();
-        eventSubOldSocket = null;
-      } else {
-        eventSubReady = true;
-        eventSubSocket = ws;
-        resubscribeAllEventSub();
-      }
-      return;
-    }
-
-    if (type === "session_keepalive" || type === "notification") resetEventSubKeepalive();
-
-    if (type === "session_reconnect") {
-      eventSubOldSocket = ws;
-      connectEventSub(data.payload.session.reconnect_url);
-      return;
-    }
-
-    if (type === "notification") {
-      handleEventSubNotification(data.metadata.subscription_type, data.payload);
-    }
-
-    if (type === "revocation") {
-      const sub = data.payload.subscription;
-      console.warn("EventSub revocation:", sub.type, sub.status);
-      const tracked = eventSubSubscriptions[sub.id];
-      if (tracked) {
-        delete eventSubSubscriptions[sub.id];
-        const subs = eventSubChannelSubs[tracked.channel];
-        if (subs) {
-          eventSubChannelSubs[tracked.channel] = subs.filter(id => id !== sub.id);
-          if (!eventSubChannelSubs[tracked.channel].length) {
-            delete eventSubChannelSubs[tracked.channel];
-            startPredictionPoll(tracked.channel);
-          }
-        }
-      }
-    }
-  };
-
-  ws.onclose = () => {
-    clearTimeout(eventSubKeepaliveTimeout);
-    if (ws === eventSubOldSocket) { eventSubOldSocket = null; return; }
-    eventSubReady = false;
-    eventSubSessionId = null;
-    eventSubSubscriptions = {};
-    eventSubChannelSubs = {};
-    for (const ch of joinedChannels) {
-      if (!predictionPolls[ch]) startPredictionPoll(ch);
-    }
-    setTimeout(() => {
-      eventSubReconnectDelay = Math.min(eventSubReconnectDelay * 2, 30000);
-      connectEventSub();
-    }, eventSubReconnectDelay);
-  };
-
-  ws.onerror = () => { ws.close(); };
-}
-
-function resetEventSubKeepalive() {
-  clearTimeout(eventSubKeepaliveTimeout);
-  eventSubKeepaliveTimeout = setTimeout(() => {
-    console.warn("EventSub keepalive timeout, reconnecting");
-    if (eventSubSocket) eventSubSocket.close();
-  }, (eventSubKeepaliveSeconds + 5) * 1000);
-}
-
-function disconnectEventSub() {
-  clearTimeout(eventSubKeepaliveTimeout);
-  eventSubReady = false;
-  eventSubSessionId = null;
-  eventSubSubscriptions = {};
-  eventSubChannelSubs = {};
-  if (eventSubOldSocket) { eventSubOldSocket.close(); eventSubOldSocket = null; }
-  if (eventSubSocket) { const ws = eventSubSocket; eventSubSocket = null; ws.close(); }
-}
-
-// --- EventSub subscription management ---
-async function eventSubSubscribe(type, version, condition, channel) {
-  if (!eventSubSessionId) return;
-  try {
-    const data = await helixPost("eventsub/subscriptions", {
-      type, version, condition,
-      transport: { method: "websocket", session_id: eventSubSessionId },
-    });
-    const sub = data.data?.[0];
-    if (sub) {
-      eventSubSubscriptions[sub.id] = { type, channel };
-      if (!eventSubChannelSubs[channel]) eventSubChannelSubs[channel] = [];
-      eventSubChannelSubs[channel].push(sub.id);
-    }
-  } catch (e) {
-    console.error(`EventSub subscribe ${type} failed:`, e);
-  }
-}
-
-async function eventSubUnsubscribeChannel(channel) {
-  const subIds = eventSubChannelSubs[channel];
-  if (!subIds) return;
-  delete eventSubChannelSubs[channel];
-  for (const id of subIds) {
-    delete eventSubSubscriptions[id];
-    helixDelete(`eventsub/subscriptions?id=${id}`).catch(e => console.error("EventSub unsub failed:", e));
-  }
-}
-
-async function subscribeChannelPredictions(channel, broadcasterId) {
-  const cond = { broadcaster_user_id: broadcasterId };
-  await Promise.all([
-    eventSubSubscribe("channel.prediction.begin", "1", cond, channel),
-    eventSubSubscribe("channel.prediction.progress", "1", cond, channel),
-    eventSubSubscribe("channel.prediction.lock", "1", cond, channel),
-    eventSubSubscribe("channel.prediction.end", "1", cond, channel),
-  ]);
-}
-
-// Stub — subscribe logic ready, no UI yet
-async function subscribeChannelPolls(_channel, _broadcasterId) {}
-
-async function resubscribeAllEventSub() {
-  for (const ch of joinedChannels) {
-    const uid = channelUserIds[ch];
-    if (!uid) continue;
-    await subscribeChannelPredictions(ch, uid);
-    if (eventSubChannelSubs[ch]?.length) stopPredictionPoll(ch);
-  }
-}
-
-// --- EventSub notification handling ---
-function handleEventSubNotification(subscriptionType, payload) {
-  if (subscriptionType.startsWith("channel.prediction.")) {
-    const event = payload.event;
-    const channel = Object.keys(channelUserIds).find(ch => channelUserIds[ch] === event.broadcaster_user_id);
-    if (channel) handlePredictionEvent(subscriptionType, event, channel);
-  }
-}
-
-function handlePredictionEvent(subscriptionType, event, channel) {
-  const prediction = normalizeEventSubPrediction(subscriptionType, event);
-  const cached = userPredictions[prediction.id];
-  if (cached) prediction.userPrediction = cached;
-
-  if (subscriptionType === "channel.prediction.end") {
-    const endEvent = prediction.status === "CANCELED" ? "canceled" : "resolved";
-    broadcast({ type: "prediction-event", event: endEvent, prediction }, channel);
-    delete userPredictions[prediction.id];
-  } else {
-    const eventMap = {
-      "channel.prediction.begin": "started",
-      "channel.prediction.lock": "locked",
-    };
-    if (eventMap[subscriptionType]) broadcast({ type: "prediction-event", event: eventMap[subscriptionType], prediction }, channel);
-  }
-
-  broadcast({ type: "prediction-update", prediction }, channel);
-
-  if (subscriptionType === "channel.prediction.begin" && currentAccount) {
-    fetchPrediction(channel).then(gqlPred => {
-      if (gqlPred?.userPrediction) userPredictions[gqlPred.id] = gqlPred.userPrediction;
-    }).catch(() => {});
-  }
-}
-
-function normalizeEventSubPrediction(subscriptionType, event) {
-  const statusMap = {
-    "channel.prediction.begin": "ACTIVE",
-    "channel.prediction.progress": "ACTIVE",
-    "channel.prediction.lock": "LOCKED",
-    "channel.prediction.end": event.status === "canceled" ? "CANCELED" : "RESOLVED",
-  };
-  const outcomes = (event.outcomes || []).map(o => ({
-    id: o.id,
-    title: o.title,
-    color: o.color?.toUpperCase() || "BLUE",
-    totalPoints: o.channel_points || 0,
-    totalUsers: o.users || 0,
-  }));
-  return {
-    id: event.id,
-    title: event.title,
-    status: statusMap[subscriptionType] || "ACTIVE",
-    createdAt: event.started_at,
-    lockedAt: event.locked_at || null,
-    endedAt: event.ended_at || null,
-    predictionWindowSeconds: event.prediction_window || 120,
-    outcomes,
-    winningOutcomeId: event.winning_outcome_id || null,
-    userPrediction: null,
-  };
 }
 
 // --- Port management ---
@@ -788,7 +532,6 @@ chrome.runtime.onConnect.addListener((port) => {
       // Store port's channel for cleanup
       port._channel = channel;
       joinChannel(channel);
-      // Prediction poll starts as GQL fallback; stopped if EventSub takes over below
       startPredictionPoll(channel);
 
       // Send account info
@@ -810,11 +553,6 @@ chrome.runtime.onConnect.addListener((port) => {
         if (userId) {
           channelUserIds[channel] = userId;
           startPinnedPoll(channel);
-          if (eventSubHasScopes && eventSubReady) {
-            subscribeChannelPredictions(channel, userId).then(() => {
-              if (eventSubChannelSubs[channel]?.length) stopPredictionPoll(channel);
-            });
-          }
           const [badges, emotes, recentMessages, rewards] = await Promise.all([
             fetchBadges(helixFetch, userId),
             fetchAllEmotes(userId),
@@ -910,7 +648,6 @@ chrome.runtime.onConnect.addListener((port) => {
           // Force-fetch to update userPrediction state
           const prediction = await fetchPrediction(port._channel);
           if (prediction) {
-            if (prediction.userPrediction) userPredictions[prediction.id] = prediction.userPrediction;
             const poll = predictionPolls[port._channel];
             if (poll) { poll.lastPrediction = prediction; poll.lastJSON = JSON.stringify(prediction); }
             broadcast({ type: "prediction-update", prediction }, port._channel);
@@ -952,7 +689,6 @@ chrome.runtime.onConnect.addListener((port) => {
         partChannel(port._channel);
         stopPredictionPoll(port._channel);
         stopPinnedPoll(port._channel);
-        eventSubUnsubscribeChannel(port._channel);
       }
     }
   });
@@ -999,12 +735,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         else accounts.push(account);
         await chrome.storage.local.set({ accounts });
 
-        // Reconnect IRC + EventSub with new account
         currentAccount = account;
         if (ircSocket) ircSocket.close();
         connectIRC();
-        disconnectEventSub();
-        checkEventSubScopes().then(() => connectEventSub());
         broadcast({
           type: "account-info",
           account: { login: account.login, userId: account.userId },
@@ -1031,8 +764,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       currentAccount = await getActiveAccount();
       if (ircSocket) ircSocket.close();
       connectIRC();
-      disconnectEventSub();
-      checkEventSubScopes().then(() => connectEventSub());
       broadcast({
         type: "account-info",
         account: currentAccount
@@ -1049,8 +780,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 async function init() {
   currentAccount = await getActiveAccount();
   connectIRC();
-  await checkEventSubScopes();
-  connectEventSub();
 }
 
 init();

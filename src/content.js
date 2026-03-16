@@ -1093,6 +1093,11 @@ function updatePredictionUI() {
   predictionBanner.classList.remove("cvs-hidden");
   predictionBanner.innerHTML = "";
 
+  const icon = document.createElement("span");
+  icon.className = "cvs-pred-icon";
+  icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 640 512" fill="currentColor"><path d="M384 32H512c17.7 0 32 14.3 32 32s-14.3 32-32 32H398.4c-5.2 25.8-22.9 47.1-46.4 57.3V448H512c17.7 0 32 14.3 32 32s-14.3 32-32 32H128c-17.7 0-32-14.3-32-32s14.3-32 32-32H288V153.3c-23.5-10.3-41.2-31.6-46.4-57.3H128c-17.7 0-32-14.3-32-32s14.3-32 32-32H256c14.6-19.4 37.8-32 64-32s49.4 12.6 64 32zM125.8 177.3L51.1 320H200.5L125.8 177.3zM4.2 336.1L100 157c6.1-11.5 20.6-15.7 32-10.1 8 3.9 13.3 11.4 15 19.6l95.8 179.1c14.6 27.4 1.4 60.7-29.6 71.4C205 420.3 196.4 422 187.8 422c0 0 0 0-.1 0H63.9c0 0 0 0-.1 0c-8.6 0-17.2-1.7-25.2-5.1C7.5 407.4-5.1 378.3 4.2 336.1zM514.2 177.3L439.5 320H588.9L514.2 177.3zM392.4 336.1L488.2 157c6.1-11.5 20.6-15.7 32-10.1 8 3.9 13.3 11.4 15 19.6l95.8 179.1c14.6 27.4 1.4 60.7-29.6 71.4-8 3.4-16.6 5.1-25.2 5.1c0 0 0 0-.1 0H452.1c0 0 0 0-.1 0c-8.6 0-17.2-1.7-25.2-5.1C395.9 407.4 383.3 378.3 392.4 336.1z"/></svg>';
+  predictionBanner.appendChild(icon);
+
   const titleSpan = document.createElement("span");
   titleSpan.className = "cvs-pred-title";
   titleSpan.textContent = p.title;
@@ -1120,11 +1125,6 @@ function updatePredictionUI() {
     dismiss.addEventListener("click", (e) => { e.stopPropagation(); predictionDismissed = true; updatePredictionUI(); });
     predictionBanner.appendChild(dismiss);
   }
-  const chevron = document.createElement("span");
-  chevron.className = "cvs-pred-chevron";
-  chevron.textContent = predictionExpanded ? "\u25BE" : "\u25B8";
-  predictionBanner.appendChild(chevron);
-
   // --- Expanded panel ---
   if (predictionExpanded) {
     predictionPanel.classList.remove("cvs-hidden");
@@ -1138,50 +1138,59 @@ function updatePredictionUI() {
 function renderPredictionPanel(p) {
   predictionPanel.innerHTML = "";
   const totalPoints = p.outcomes.reduce((s, o) => s + o.totalPoints, 0) || 1;
+  const left = p.outcomes[0], right = p.outcomes[1];
+  if (!left) return;
+  const leftPct = right ? Math.round((left.totalPoints / totalPoints) * 100) : 100;
+  const rightPct = right ? 100 - leftPct : 0;
+  const leftRatio = left.totalUsers > 0 ? (totalPoints / left.totalPoints).toFixed(2) : "\u2014";
+  const rightRatio = right && right.totalUsers > 0 ? (totalPoints / right.totalPoints).toFixed(2) : "\u2014";
+  const userBet = p.userPrediction;
 
-  for (const outcome of p.outcomes) {
-    const row = document.createElement("div");
-    row.className = "cvs-pred-outcome";
+  // Split bar
+  const bar = document.createElement("div");
+  bar.className = "cvs-pred-split-bar";
+  const leftFill = document.createElement("div");
+  leftFill.className = "cvs-pred-split-left";
+  leftFill.style.width = leftPct + "%";
+  leftFill.textContent = leftPct + "%";
+  if (right) {
+    const rightFill = document.createElement("div");
+    rightFill.className = "cvs-pred-split-right";
+    rightFill.style.width = rightPct + "%";
+    rightFill.textContent = rightPct + "%";
+    bar.appendChild(leftFill);
+    bar.appendChild(rightFill);
+  } else {
+    bar.appendChild(leftFill);
+  }
+  predictionPanel.appendChild(bar);
+
+  // Columns
+  const cols = document.createElement("div");
+  cols.className = "cvs-pred-cols";
+
+  function buildSide(outcome, pct, ratio, align) {
+    const side = document.createElement("div");
+    side.className = "cvs-pred-side cvs-pred-side-" + align;
     const isWinner = p.winningOutcomeId === outcome.id;
-    if (p.status === "RESOLVED") row.classList.add(isWinner ? "cvs-pred-winner" : "cvs-pred-loser");
+    if (p.status === "RESOLVED") side.classList.add(isWinner ? "cvs-pred-winner" : "cvs-pred-loser");
 
-    // Header: name + percentage
-    const header = document.createElement("div");
-    header.className = "cvs-pred-outcome-header";
-    const nameSpan = document.createElement("span");
-    nameSpan.textContent = outcome.title;
-    nameSpan.style.color = predOutcomeColor(outcome.color);
-    const pct = Math.round((outcome.totalPoints / totalPoints) * 100);
-    const pctSpan = document.createElement("span");
-    pctSpan.className = "cvs-pred-pct";
-    pctSpan.textContent = pct + "%";
-    header.appendChild(nameSpan);
-    header.appendChild(pctSpan);
-    row.appendChild(header);
+    const name = document.createElement("div");
+    name.className = "cvs-pred-side-name";
+    name.textContent = outcome.title;
+    name.style.color = predOutcomeColor(outcome.color);
+    side.appendChild(name);
 
-    // Ratio bar
-    const bar = document.createElement("div");
-    bar.className = "cvs-pred-bar";
-    const fill = document.createElement("div");
-    fill.className = "cvs-pred-bar-fill";
-    fill.style.width = pct + "%";
-    fill.style.background = predOutcomeColor(outcome.color);
-    bar.appendChild(fill);
-    row.appendChild(bar);
-
-    // Stats
     const stats = document.createElement("div");
-    stats.className = "cvs-pred-stats";
-    stats.textContent = `${formatPredPoints(outcome.totalPoints)} \u00b7 ${outcome.totalUsers} voter${outcome.totalUsers !== 1 ? "s" : ""}`;
-    row.appendChild(stats);
+    stats.className = "cvs-pred-side-stats";
+    stats.innerHTML = `${formatPredPoints(outcome.totalPoints)} &middot; ${outcome.totalUsers} voter${outcome.totalUsers !== 1 ? "s" : ""} &middot; ${ratio}x`;
+    side.appendChild(stats);
 
-    // Bet display or input
-    const userBet = p.userPrediction;
     if ((p.status === "ACTIVE" || p.status === "LOCKED") && userBet?.outcomeId === outcome.id) {
       const betInfo = document.createElement("div");
       betInfo.className = "cvs-pred-your-bet";
       betInfo.textContent = `Your bet: ${formatPredPoints(userBet.points)}`;
-      row.appendChild(betInfo);
+      side.appendChild(betInfo);
     } else if (p.status === "ACTIVE" && account && !userBet) {
       const betRow = document.createElement("div");
       betRow.className = "cvs-pred-bet-row";
@@ -1205,11 +1214,15 @@ function renderPredictionPanel(p) {
       });
       betRow.appendChild(betInput);
       betRow.appendChild(betBtn);
-      row.appendChild(betRow);
+      side.appendChild(betRow);
     }
 
-    predictionPanel.appendChild(row);
+    return side;
   }
+
+  cols.appendChild(buildSide(left, leftPct, leftRatio, "left"));
+  if (right) cols.appendChild(buildSide(right, rightPct, rightRatio, "right"));
+  predictionPanel.appendChild(cols);
 }
 
 function renderPredictionSystemMessage(event, prediction) {
@@ -1282,7 +1295,7 @@ function updatePinnedUI() {
   // Pin icon (SVG)
   const icon = document.createElement("span");
   icon.className = "cvs-pin-icon";
-  icon.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14"><path fill="currentColor" d="M12 1.5a.5.5 0 0 0-.854-.354L8.354 3.854a.5.5 0 0 1-.708 0L6.354 2.561A.5.5 0 0 0 5.5 2.915V7.5a.5.5 0 0 1-.146.354l-3 3A.5.5 0 0 0 2.707 12H7v6.5a.5.5 0 0 0 1 0V12h4.293a.5.5 0 0 0 .353-.854l-3-3A.5.5 0 0 1 9.5 7.5V3.915a.5.5 0 0 0-.146-.354"/></svg>';
+  icon.innerHTML = '<svg viewBox="0 0 20 20" width="16" height="16"><path fill="currentColor" d="M12 1.5a.5.5 0 0 0-.854-.354L8.354 3.854a.5.5 0 0 1-.708 0L6.354 2.561A.5.5 0 0 0 5.5 2.915V7.5a.5.5 0 0 1-.146.354l-3 3A.5.5 0 0 0 2.707 12H7v6.5a.5.5 0 0 0 1 0V12h4.293a.5.5 0 0 0 .353-.854l-3-3A.5.5 0 0 1 9.5 7.5V3.915a.5.5 0 0 0-.146-.354"/></svg>';
   pinnedBanner.appendChild(icon);
 
   // Username (message sender)
@@ -1316,10 +1329,6 @@ function updatePinnedUI() {
   pinnedBanner.appendChild(dismiss);
 
   // Chevron
-  const chevron = document.createElement("span");
-  chevron.className = "cvs-pin-chevron";
-  chevron.textContent = pinnedExpanded ? "\u25BE" : "\u25B8";
-  pinnedBanner.appendChild(chevron);
 
   // Expanded panel
   if (pinnedExpanded && pinnedPanel) {
@@ -1819,8 +1828,8 @@ function renderAcItems(results) {
       if (r.badgeStr) {
         for (const badge of r.badgeStr.split(",")) {
           if (!badge) continue;
-          const url = badges[badge];
-          if (url) { const img = document.createElement("img"); img.className = "cvs-badge"; img.src = url; img.alt = badge.split("/")[0]; item.appendChild(img); }
+          const info = badges[badge];
+          if (info) { const img = document.createElement("img"); img.className = "cvs-badge"; img.src = info.url; img.alt = badge.split("/")[0]; item.appendChild(img); }
         }
       }
       const nameSpan = document.createElement("span");
