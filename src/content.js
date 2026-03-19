@@ -31,6 +31,7 @@ let inputEl = null;
 let inputOverlay = null;
 let pauseBar = null;
 let settingsPanel = null;
+let accountListEl = null;
 let scrollThumb = null;
 let userColors = {}; // username -> color from Twitch IRC tags
 let channelRewards = {}; // reward id -> title from GQL
@@ -237,7 +238,56 @@ function closeSettingsPanel(e) {
 
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.settings) applySettings(changes.settings.newValue);
+  if (changes.accounts) renderSettingsAccounts();
 });
+
+function renderSettingsAccounts() {
+  if (!accountListEl) return;
+  chrome.storage.local.get("accounts", ({ accounts }) => {
+    accountListEl.innerHTML = "";
+    if (!accounts || accounts.length === 0) {
+      accountListEl.innerHTML = '<div class="cvs-account-empty">No accounts</div>';
+      return;
+    }
+    for (const acc of accounts) {
+      const div = document.createElement("div");
+      div.className = "cvs-account" + (acc.active ? " cvs-account-active" : "");
+      const name = document.createElement("span");
+      name.className = "cvs-account-name";
+      name.textContent = acc.login;
+      div.appendChild(name);
+      const actions = document.createElement("span");
+      actions.className = "cvs-account-actions";
+      if (!acc.active) {
+        const switchBtn = document.createElement("button");
+        switchBtn.textContent = "Switch";
+        switchBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          chrome.storage.local.get("accounts", ({ accounts: accs }) => {
+            for (const a of accs) a.active = a.userId === acc.userId;
+            chrome.storage.local.set({ accounts: accs });
+            chrome.runtime.sendMessage({ type: "account-changed" });
+          });
+        });
+        actions.appendChild(switchBtn);
+      }
+      const removeBtn = document.createElement("button");
+      removeBtn.textContent = "Remove";
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        chrome.storage.local.get("accounts", ({ accounts: accs }) => {
+          const filtered = accs.filter(a => a.userId !== acc.userId);
+          if (filtered.length && !filtered.some(a => a.active)) filtered[0].active = true;
+          chrome.storage.local.set({ accounts: filtered });
+          chrome.runtime.sendMessage({ type: "account-changed" });
+        });
+      });
+      actions.appendChild(removeBtn);
+      div.appendChild(actions);
+      accountListEl.appendChild(div);
+    }
+  });
+}
 
 // --- DOM setup ---
 function buildChatUI(shell) {
@@ -394,6 +444,29 @@ function buildChatUI(shell) {
 
   settingsPanel = document.createElement("div");
   settingsPanel.className = "cvs-settings-panel cvs-hidden";
+
+  // Accounts section
+  const accountsHeader = document.createElement("div");
+  accountsHeader.className = "cvs-settings-section-header";
+  accountsHeader.textContent = "Accounts";
+  settingsPanel.appendChild(accountsHeader);
+  accountListEl = document.createElement("div");
+  accountListEl.className = "cvs-account-list";
+  settingsPanel.appendChild(accountListEl);
+  const addAccountBtn = document.createElement("button");
+  addAccountBtn.className = "cvs-add-account";
+  addAccountBtn.textContent = "Add account";
+  addAccountBtn.addEventListener("click", (e) => { e.stopPropagation(); chrome.runtime.sendMessage({ type: "add-account" }); });
+  settingsPanel.appendChild(addAccountBtn);
+  const accountDivider = document.createElement("hr");
+  accountDivider.className = "cvs-settings-divider";
+  settingsPanel.appendChild(accountDivider);
+  renderSettingsAccounts();
+
+  const settingsHeader = document.createElement("div");
+  settingsHeader.className = "cvs-settings-section-header";
+  settingsHeader.textContent = "Settings";
+  settingsPanel.appendChild(settingsHeader);
 
   // Toggle rows
   const toggles = [
@@ -570,6 +643,8 @@ function buildChatUI(shell) {
   inputRow.className = "cvs-input-row";
   inputRow.appendChild(inputWrap);
   inputRow.appendChild(pointsEl);
+  inputRow.appendChild(settingsBtn);
+  inputRow.appendChild(settingsPanel);
 
   // Prediction banner + expanded panel (flex children above messages)
   predictionBanner = document.createElement("div");
@@ -600,8 +675,6 @@ function buildChatUI(shell) {
   chatContainer.appendChild(replyModeEl);
   chatContainer.appendChild(inputRow);
   shell.appendChild(chatContainer);
-  shell.appendChild(settingsBtn);
-  shell.appendChild(settingsPanel);
   shell.appendChild(resizeHandle);
 }
 
@@ -2372,14 +2445,24 @@ function init() {
 
   // Fullscreen chat: intercept Twitch triggers on capture phase so user gesture
   // is preserved for our requestFullscreen call.
+  let inNativeFullscreen = false;
   document.addEventListener("fullscreenchange", () => {
-    // Restore normal mode after exiting our fullscreen
-    if (!document.fullscreenElement && !wasTheatreBeforeFs && isTheatreMode()) {
-      setTimeout(clickTheatreBtn, 200);
+    if (document.fullscreenElement && !isOurFullscreen()) {
+      // Twitch's native fullscreen (player element) — clear resize CSS so the
+      // player can fill the screen without our !important right/width fighting it.
+      inNativeFullscreen = true;
+      if (cvsStyleEl) cvsStyleEl.textContent = "";
+    } else if (!document.fullscreenElement && inNativeFullscreen) {
+      // Exiting Twitch's native fullscreen — re-apply resize CSS.
+      inNativeFullscreen = false;
+      if (settings.chatWidth && cvsStyleEl && !chatCollapsed && extensionEnabled) setChatWidth(getChatWidthPx());
+    } else if (!document.fullscreenElement) {
+      // Exiting our custom fullscreen — restore normal mode if we activated theatre.
+      if (!wasTheatreBeforeFs && isTheatreMode()) setTimeout(clickTheatreBtn, 200);
     }
   });
   document.addEventListener("keydown", (e) => {
-    if (!currentChannel || !extensionEnabled) return;
+    if ((!currentChannel && !vodId) || !extensionEnabled) return;
     const tag = e.target.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable) return;
     // Alt+T in our fullscreen: exit instead of toggling theatre
@@ -2393,7 +2476,7 @@ function init() {
     else if (e.key === " ") { e.preventDefault(); e.stopPropagation(); const v = document.querySelector("video"); if (v) { if (v.paused) v.play(); else v.pause(); } }
   }, true);
   document.addEventListener("click", (e) => {
-    if (e.target.closest('[data-a-target="player-fullscreen-button"]') && currentChannel && extensionEnabled) {
+    if (e.target.closest('[data-a-target="player-fullscreen-button"]') && (currentChannel || vodId) && extensionEnabled) {
       e.preventDefault(); e.stopPropagation(); toggleFullscreenChat();
     }
   }, true);

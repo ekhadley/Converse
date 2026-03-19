@@ -1,7 +1,7 @@
 /* Converse — chat styles */
 
 /* When Converse is active, hide all native Twitch chat children */
-.cvs-active > :not(#cvs-chat):not(.cvs-resize-handle):not(.cvs-settings-btn):not(.cvs-settings-panel) {
+.cvs-active > :not(#cvs-chat):not(.cvs-resize-handle) {
   display: none !important;
 }
 
@@ -258,6 +258,7 @@
   align-items: stretch;
   flex-shrink: 0;
   margin: 4px 8px;
+  position: relative;
 }
 
 .cvs-input-wrap {
@@ -273,10 +274,12 @@
 .cvs-points {
   display: flex;
   align-items: center;
+  align-self: center;
   gap: 4px;
   padding: 0 8px;
+  margin-top: -2px;
   color: #dedee3;
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 600;
   flex-shrink: 0;
   white-space: nowrap;
@@ -420,26 +423,19 @@
 /* --- In-chat settings gear + panel --- */
 
 .cvs-settings-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
   width: 28px;
   height: 28px;
   display: flex;
   align-items: center;
+  align-self: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.4);
+  background: none;
   border: none;
   border-radius: 4px;
   color: #898395;
   cursor: pointer;
-  z-index: 6;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.cvs-shell:hover > .cvs-settings-btn {
-  opacity: 1;
+  flex-shrink: 0;
+  margin-top: -2px;
 }
 
 .cvs-settings-btn:hover {
@@ -449,10 +445,10 @@
 
 .cvs-settings-panel {
   position: absolute;
-  top: 38px;
-  right: 6px;
+  bottom: 100%;
+  right: 0;
   width: 200px;
-  max-height: calc(100% - 100px);
+  max-height: calc(100vh - 150px);
   overflow-y: auto;
   background: rgba(15, 15, 20, 0.95);
   backdrop-filter: blur(8px);
@@ -461,9 +457,74 @@
   padding: 8px 12px;
   z-index: 6;
   scrollbar-width: none;
+  margin-bottom: 4px;
 }
 
 .cvs-settings-panel::-webkit-scrollbar { display: none; }
+
+.cvs-settings-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: #bf94ff;
+  margin-bottom: 4px;
+}
+
+.cvs-settings-divider {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 6px 0;
+}
+
+.cvs-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  background: #18181b;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.cvs-account-active { border-left: 2px solid #9147ff; }
+
+.cvs-account-name { font-weight: 600; }
+
+.cvs-account-actions { display: flex; gap: 4px; }
+
+.cvs-account-actions button {
+  background: none;
+  border: 1px solid #3a3a3d;
+  color: #efeff1;
+  border-radius: 3px;
+  padding: 1px 6px;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.cvs-account-actions button:hover { background: #3a3a3d; }
+
+.cvs-account-empty {
+  color: #898395;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.cvs-add-account {
+  display: block;
+  width: 100%;
+  padding: 5px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  background: #9147ff;
+  color: #fff;
+  margin-top: 4px;
+}
+
+.cvs-add-account:hover { background: #772ce8; }
 
 .cvs-settings-row {
   display: flex;

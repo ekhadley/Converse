@@ -237,6 +237,15 @@ function startPredictionPoll(channel) {
     const prediction = await fetchPrediction(channel);
     // GQL activePredictionEvent returns null for locked predictions — preserve non-terminal state
     if (!prediction && poll.lastPrediction && (poll.lastPrediction.status === "ACTIVE" || poll.lastPrediction.status === "LOCKED")) return;
+    // Restore persisted user bet if GQL didn't return one
+    if (prediction && !prediction.userPrediction) {
+      const stored = await chrome.storage.local.get(`predBet:${prediction.id}`);
+      if (stored[`predBet:${prediction.id}`]) prediction.userPrediction = stored[`predBet:${prediction.id}`];
+    }
+    // Clean up persisted bet on terminal states
+    if (prediction && (prediction.status === "RESOLVED" || prediction.status === "CANCELED")) {
+      chrome.storage.local.remove(`predBet:${prediction.id}`);
+    }
     const json = JSON.stringify(prediction);
     if (json === poll.lastJSON) return;
     const prev = poll.lastPrediction;
@@ -645,12 +654,14 @@ chrome.runtime.onConnect.addListener((port) => {
             extensions: { persistedQuery: { version: 1, sha256Hash: GQL_MAKE_PREDICTION_HASH } },
           }, { auth: true });
           port.postMessage({ type: "prediction-result", success: true });
-          // Force-fetch to update userPrediction state
-          const prediction = await fetchPrediction(port._channel);
-          if (prediction) {
-            const poll = predictionPolls[port._channel];
-            if (poll) { poll.lastPrediction = prediction; poll.lastJSON = JSON.stringify(prediction); }
-            broadcast({ type: "prediction-update", prediction }, port._channel);
+          // Persist user bet — GQL won't return it without matching auth
+          const userPrediction = { outcomeId: msg.outcomeId, points: msg.points };
+          chrome.storage.local.set({ [`predBet:${msg.eventId}`]: userPrediction });
+          const poll = predictionPolls[port._channel];
+          if (poll?.lastPrediction && poll.lastPrediction.id === msg.eventId) {
+            poll.lastPrediction.userPrediction = userPrediction;
+            poll.lastJSON = JSON.stringify(poll.lastPrediction);
+            broadcast({ type: "prediction-update", prediction: poll.lastPrediction }, port._channel);
           }
         } catch (e) {
           port.postMessage({ type: "prediction-result", success: false, error: e.message });

@@ -59,7 +59,9 @@ Click a username to open a card showing avatar, display name, account creation d
 Controlled via `hideChat` and `useNativeChat` settings in `chrome.storage.local`. `hideChat` collapses the chat column to width 0 with CSS overrides (mode-aware, same as resize). `useNativeChat` removes the `cvs-active` class from the chat-shell, showing Twitch's native chat. Both are togglable from the in-chat settings panel and the extension popup. Starting a resize drag clears `hideChat`. `applyChatVisibility()` reads these settings and applies the appropriate state.
 
 ### Fullscreen Chat
-`f` key or Twitch's fullscreen button triggers `document.documentElement.requestFullscreen()` — browser-level fullscreen with chat visible. If not already in theatre mode, theatre is activated first (resize CSS handles the layout). `wasTheatreBeforeFs` tracks whether to restore normal mode on exit. `fullscreenchange` listener restores normal mode via `clickTheatreBtn()` after a 200ms delay. Additional keyboard shortcuts captured on the capture phase: `t` toggles theatre, `m` toggles mute, `Space` toggles play/pause. `Alt+T` in our fullscreen exits fullscreen instead of toggling theatre. Twitch's native fullscreen button click is intercepted on capture phase and redirected to `toggleFullscreenChat()`.
+`f` key or Twitch's fullscreen button triggers `document.documentElement.requestFullscreen()` — browser-level fullscreen with chat visible. Works on both live channels and VOD pages (guards check `currentChannel || vodId`). If not already in theatre mode, theatre is activated first (resize CSS handles the layout). `wasTheatreBeforeFs` tracks whether to restore normal mode on exit. `fullscreenchange` listener restores normal mode via `clickTheatreBtn()` after a 200ms delay. Additional keyboard shortcuts captured on the capture phase: `t` toggles theatre, `m` toggles mute, `Space` toggles play/pause. `Alt+T` in our fullscreen exits fullscreen instead of toggling theatre. Twitch's native fullscreen button click is intercepted on capture phase and redirected to `toggleFullscreenChat()`.
+
+**Native fullscreen coexistence:** If Twitch's native fullscreen is entered (e.g. double-click video), `fullscreenchange` detects that `fullscreenElement` is not `documentElement` (`inNativeFullscreen` flag) and clears resize CSS overrides so the player can fill the screen without `!important` rules fighting it. On exit, resize CSS is re-applied.
 
 ### Auto-scroll / Pause Bar
 Chat auto-scrolls to bottom. When user scrolls up (>30px from bottom), `autoScroll` is set false and the "Chat paused" bar appears as an absolute-positioned overlay above the input (does not reserve vertical space or push messages). Clicking the bar or scrolling back to bottom resumes.
@@ -106,7 +108,7 @@ Displays active channel predictions with a collapsible banner near the top of ch
 
 **Data layer:** Polls `ChannelPointsPredictionContext` GQL operation every 5s via `startPredictionPoll(channel)`. The GQL response has three separate arrays: `activePredictionEvents` (betting open), `lockedPredictionEvents` (betting closed, awaiting result), and `resolvedPredictionEvents` (finished). `fetchPrediction` checks all three in priority order. `normalizePrediction()` handles field name variations. State diffing detects transitions (ACTIVE→LOCKED→RESOLVED/CANCELED). EventSub was removed — prediction subscriptions require broadcaster/mod auth (403 for regular viewers).
 
-**Bet placement:** `MakePrediction` GQL mutation via `gqlFetch` with auth. Content sends `make-prediction` with `eventId`, `outcomeId`, `points`. Background generates a `transactionID` via `crypto.randomUUID()`, executes the mutation, then force-fetches GQL to update poll state immediately.
+**Bet placement:** `MakePrediction` GQL mutation via `gqlFetch` with auth. Content sends `make-prediction` with `eventId`, `outcomeId`, `points`. Background generates a `transactionID` via `crypto.randomUUID()`, executes the mutation, then persists `{ outcomeId, points }` to `chrome.storage.local` under `predBet:{eventId}`. GQL doesn't return `userPrediction` without broadcaster/mod auth, so the stored bet is restored on subsequent polls. Stored bets are cleaned up on RESOLVED/CANCELED.
 
 **Banner (`.cvs-pred-banner`):** Flex child of `#cvs-chat` above `.cvs-messages`. Shows scales icon, prediction title (truncated), countdown timer (client-side via `startPredictionCountdown`, pink bold text). For RESOLVED/CANCELED: shows result text + dismiss × button. Click toggles expanded panel.
 
@@ -161,14 +163,14 @@ On VOD pages (`/videos/{id}`), historical chat comments are fetched from Twitch'
 **Input:** Disabled with "Replay chat" placeholder on VOD pages. Badges and emotes are fetched for the VOD's channel (resolved via Helix `videos?id=`).
 
 ### Account Management
-OAuth flow via `chrome.identity.launchWebAuthFlow` with scopes `chat:read chat:edit`. Multiple accounts stored in `chrome.storage.local`, one active at a time. Switch/remove from popup. Changing account closes IRC and reconnects.
+OAuth flow via `chrome.identity.launchWebAuthFlow` with scopes `chat:read chat:edit`. Multiple accounts stored in `chrome.storage.local`, one active at a time. Switch/remove from popup or in-chat settings panel. Changing account closes IRC and reconnects. In-chat account management: settings panel has an "Accounts" section at the top showing all accounts with Switch/Remove buttons and an "Add account" button. Account list re-renders on `chrome.storage.onChanged` for the `accounts` key.
 
 ### Settings
 Two access points, both read/write the same `chrome.storage.local` `settings` key, applied live via `chrome.storage.onChanged`:
 
 **Extension popup** (`popup.html`/`popup.js`): Account management + all settings. `saveSettings()` merges with existing storage to preserve keys it doesn't manage (e.g. `chatWidth`).
 
-**In-chat settings panel**: Gear icon (`.cvs-settings-btn`) in top-right of `#cvs-chat`, visible on hover. Click toggles a dropdown panel (`.cvs-settings-panel`) with the full settings menu: hide chat, use Twitch chat, timestamps, badges, font size, spacing, message cap, row colors, emote providers, plus extension actions (open chrome://extensions, reload extension). Click-outside dismisses. Extension action buttons proxy through runtime messages to the background since content scripts lack `chrome.tabs.create()`/`chrome.runtime.reload()` access.
+**In-chat settings panel**: Gear icon (`.cvs-settings-btn`) in the input row (right of channel points). Click toggles a dropdown panel (`.cvs-settings-panel`) that opens upward from the input row. Sections: Accounts (add/switch/remove) at top, then Settings (hide chat, use Twitch chat, timestamps, badges, font size, spacing, message cap, row colors, emote providers), then extension actions (open chrome://extensions, reload extension, refresh emotes). Click-outside dismisses. Extension action buttons proxy through runtime messages to the background since content scripts lack `chrome.tabs.create()`/`chrome.runtime.reload()` access.
 
 Settings: font size (10-20), message spacing (0-20), timestamps toggle, badges toggle, predictions toggle, message cap (100-2000), odd/even row background colors, emote provider toggles (Twitch/7TV/BTTV/FFZ), hide chat, use native Twitch chat.
 
@@ -303,6 +305,8 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ### Bugs
 - [ ] Sometimes animated emotes appear frozen. One message may have the emote be frozen, the next will have them working. It isn't a chat-wide or emote-wide issue.
 - [x] When hovering an emote, sometimes an old emote tooltip will be shown, with the correct emote name but some other emote as the display image/gif (possibly just for first time hovering a new emote, not sure). — Fixed: tooltip now shows a loading spinner until the 3x image loads.
+- [x] Modified fullscreen mode doesn't work on VOD pages. — Fixed: `currentChannel` is null on VOD pages; guards now also check `vodId`. Native fullscreen CSS conflict resolved by clearing resize overrides when Twitch's player-element fullscreen is active.
+- [x] Modified fullscreen and theatre mode hotkeys don't work on VOD pages. — Fixed: same guard fix (`(!currentChannel && !vodId)` instead of `!currentChannel`).
 
 ### Small Tweaks
 
