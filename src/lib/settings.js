@@ -9,4 +9,5 @@ export const DEFAULT_SETTINGS = {
   chatWidth: null,
   bgOdd: "#0e0e10",
   bgEven: "#111114",
+  volumeStep: 5,
 };

@@ -48,6 +48,8 @@ let inputHistory = [], historyIndex = -1, historySaved = "";
 let replyTarget = null; // { msgId, username, displayName }
 let replyModeEl = null;
 let pointsEl = null;
+let rewardsPanel = null;
+let channelRewardsList = [];
 let currentThread = null; // { rootId } or null
 let threadPanel = null;
 let threadMsgList = null;
@@ -117,8 +119,16 @@ function connectPort() {
     if (msg.type === "channel-data") {
       badges = msg.badges || {};
       thirdPartyEmotes = msg.emotes || {};
-      channelRewards = msg.rewards || {};
+      channelRewardsList = msg.rewards || [];
+      channelRewards = {};
+      for (const r of channelRewardsList) channelRewards[r.id] = r.title;
       if (msg.settings) applySettings(msg.settings);
+    }
+    if (msg.type === "rewards-updated") {
+      channelRewardsList = msg.rewards || [];
+      channelRewards = {};
+      for (const r of channelRewardsList) channelRewards[r.id] = r.title;
+      renderRewardsPanel();
     }
     if (msg.type === "emotes-refreshed") {
       thirdPartyEmotes = msg.emotes || {};
@@ -357,9 +367,14 @@ function buildChatUI(shell) {
       if (e.key === "Escape") { e.preventDefault(); closeAutocomplete(); return; }
       if (e.key === "ArrowDown") { e.preventDefault(); acIndex = Math.min(acIndex + 1, acItems.length - 1); highlightAcItem(); return; }
       if (e.key === "ArrowUp") { e.preventDefault(); acIndex = Math.max(acIndex - 1, 0); highlightAcItem(); return; }
-      if (e.key === "Enter") { e.preventDefault(); if (acIndex < 0) acIndex = 0; acceptAutocomplete(); return; }
+      if (e.key === "Enter") {
+        if (acMode === "emote" && acIndex < 0) { closeAutocomplete(); }
+        else { e.preventDefault(); if (acIndex < 0) acIndex = 0; acceptAutocomplete(); return; }
+      }
     } else {
+      if (e.key === "Tab") { e.preventDefault(); return; }
       if (e.key === "Escape" && replyTarget) { e.preventDefault(); exitReplyMode(); return; }
+      if (e.key === "Escape" && rewardsPanel && !rewardsPanel.classList.contains("cvs-hidden")) { e.preventDefault(); closeRewardsPanel(); return; }
       if (e.key === "ArrowUp" && inputHistory.length) {
         e.preventDefault();
         if (historyIndex === -1) historySaved = inputEl.value;
@@ -436,6 +451,7 @@ function buildChatUI(shell) {
   settingsBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 512 512" fill="currentColor"><path d="M495.9 166.6c3.2 8.7 .5 18.4-6.4 24.6l-43.3 39.4c1.1 8.3 1.7 16.8 1.7 25.4s-.6 17.1-1.7 25.4l43.3 39.4c6.9 6.2 9.6 15.9 6.4 24.6c-4.4 11.9-9.7 23.3-15.8 34.3l-4.7 8.1c-6.6 11-14 21.4-22.1 31.2c-5.9 7.2-15.7 9.6-24.5 6.8l-55.7-17.7c-13.4 10.3-28.2 18.9-44 25.4l-12.5 57.1c-2 9.1-9 16.3-18.2 17.8c-13.8 2.3-28 3.5-42.5 3.5s-28.7-1.2-42.5-3.5c-9.2-1.5-16.2-8.7-18.2-17.8l-12.5-57.1c-15.8-6.5-30.6-15.1-44-25.4L83.1 425.9c-8.8 2.8-18.6 .3-24.5-6.8c-8.1-9.8-15.5-20.2-22.1-31.2l-4.7-8.1c-6.1-11-11.4-22.4-15.8-34.3c-3.2-8.7-.5-18.4 6.4-24.6l43.3-39.4C64.6 273.1 64 264.6 64 256s.6-17.1 1.7-25.4L22.4 191.2c-6.9-6.2-9.6-15.9-6.4-24.6c4.4-11.9 9.7-23.3 15.8-34.3l4.7-8.1c6.6-11 14-21.4 22.1-31.2c5.9-7.2 15.7-9.6 24.5-6.8l55.7 17.7c13.4-10.3 28.2-18.9 44-25.4l12.5-57.1c2-9.1 9-16.3 18.2-17.8C227.3 1.2 241.5 0 256 0s28.7 1.2 42.5 3.5c9.2 1.5 16.2 8.7 18.2 17.8l12.5 57.1c15.8 6.5 30.6 15.1 44 25.4l55.7-17.7c8.8-2.8 18.6-.3 24.5 6.8c8.1 9.8 15.5 20.2 22.1 31.2l4.7 8.1c6.1 11 11.4 22.4 15.8 34.3zM256 336a80 80 0 1 0 0-160 80 80 0 1 0 0 160z"/></svg>`;
   settingsBtn.addEventListener("click", (e) => {
     e.stopPropagation();
+    closeRewardsPanel();
     settingsPanel.classList.toggle("cvs-hidden");
     if (!settingsPanel.classList.contains("cvs-hidden")) {
       setTimeout(() => document.addEventListener("click", closeSettingsPanel), 0);
@@ -489,6 +505,7 @@ function buildChatUI(shell) {
   const spinners = [
     { label: "Font size", key: "fontSize", min: 10, max: 20 },
     { label: "Spacing", key: "messageSpacing", min: 0, max: 20 },
+    { label: "Vol step %", key: "volumeStep", min: 1, max: 25 },
   ];
   for (const { label, key, min, max } of spinners) {
     const row = document.createElement("div");
@@ -603,6 +620,7 @@ function buildChatUI(shell) {
   threadInputEl.placeholder = "Reply in thread\u2026";
   threadInputEl.addEventListener("mousedown", (e) => { if (e.button === 1) e.preventDefault(); });
   threadInputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Tab") { e.preventDefault(); return; }
     if (e.key === "Enter" && threadInputEl.value.trim() && account && currentChannel && currentThread) {
       const text = threadInputEl.value.trim();
       const rootId = currentThread.rootId;
@@ -638,11 +656,19 @@ function buildChatUI(shell) {
   pointsEl = document.createElement("div");
   pointsEl.className = "cvs-points cvs-hidden";
   pointsEl.innerHTML = `<svg width="14" height="14" viewBox="0 0 20 20" fill="#9147ff"><path d="M10 6a4 4 0 0 1 4 4h-2a2 2 0 0 0-2-2V6z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0zm-2 0a6 6 0 1 1-12 0 6 6 0 0 1 12 0z"/></svg><span></span>`;
+  pointsEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleRewardsPanel();
+  });
+
+  rewardsPanel = document.createElement("div");
+  rewardsPanel.className = "cvs-rewards-panel cvs-hidden";
 
   const inputRow = document.createElement("div");
   inputRow.className = "cvs-input-row";
   inputRow.appendChild(inputWrap);
   inputRow.appendChild(pointsEl);
+  inputRow.appendChild(rewardsPanel);
   inputRow.appendChild(settingsBtn);
   inputRow.appendChild(settingsPanel);
 
@@ -708,6 +734,86 @@ function pollChannelPoints() {
     if (t.length >= 2 && /^[\d,.]+[KMkm]?$/.test(t) && child.children.length === 0) { updatePoints(t); return; }
   }
   updatePoints(null);
+}
+
+// --- Rewards panel ---
+
+function toggleRewardsPanel() {
+  if (!rewardsPanel) return;
+  rewardsPanel.classList.toggle("cvs-hidden");
+  if (!rewardsPanel.classList.contains("cvs-hidden")) {
+    settingsPanel?.classList.add("cvs-hidden");
+    renderRewardsPanel();
+    port?.postMessage({ type: "refresh-rewards" });
+    setTimeout(() => document.addEventListener("click", closeRewardsPanelOutside), 0);
+  } else {
+    document.removeEventListener("click", closeRewardsPanelOutside);
+  }
+}
+
+function closeRewardsPanelOutside(e) {
+  if (rewardsPanel && !rewardsPanel.contains(e.target) && !e.target.closest(".cvs-points")) {
+    closeRewardsPanel();
+  }
+}
+
+function closeRewardsPanel() {
+  if (rewardsPanel) rewardsPanel.classList.add("cvs-hidden");
+  document.removeEventListener("click", closeRewardsPanelOutside);
+}
+
+function renderRewardsPanel() {
+  if (!rewardsPanel || rewardsPanel.classList.contains("cvs-hidden")) return;
+  rewardsPanel.innerHTML = "";
+  const header = document.createElement("div");
+  header.className = "cvs-rewards-header";
+  header.textContent = "Channel Rewards";
+  rewardsPanel.appendChild(header);
+  const available = channelRewardsList.filter(r => r.isEnabled && !r.isPaused);
+  if (!available.length) {
+    const empty = document.createElement("div");
+    empty.className = "cvs-rewards-empty";
+    empty.textContent = "No rewards available";
+    rewardsPanel.appendChild(empty);
+    return;
+  }
+  for (const reward of available) {
+    const item = document.createElement("div");
+    item.className = "cvs-reward-item";
+    const onCooldown = reward.cooldownExpiresAt && new Date(reward.cooldownExpiresAt) > new Date();
+    const unavailable = !reward.isInStock || onCooldown;
+    if (unavailable) item.classList.add("cvs-reward-unavailable");
+    // Image or color swatch
+    const img = document.createElement("div");
+    img.className = "cvs-reward-img";
+    if (reward.image) {
+      const imgEl = document.createElement("img");
+      imgEl.src = reward.image;
+      img.appendChild(imgEl);
+    } else {
+      img.style.backgroundColor = reward.backgroundColor;
+    }
+    item.appendChild(img);
+    // Info column
+    const info = document.createElement("div");
+    info.className = "cvs-reward-info";
+    const title = document.createElement("div");
+    title.className = "cvs-reward-title";
+    title.textContent = reward.title;
+    info.appendChild(title);
+    const costRow = document.createElement("div");
+    costRow.className = "cvs-reward-cost";
+    costRow.innerHTML = `<svg width="10" height="10" viewBox="0 0 20 20" fill="#9147ff"><path d="M10 6a4 4 0 0 1 4 4h-2a2 2 0 0 0-2-2V6z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0zm-2 0a6 6 0 1 1-12 0 6 6 0 0 1 12 0z"/></svg> ${reward.cost.toLocaleString()}`;
+    info.appendChild(costRow);
+    if (unavailable) {
+      const status = document.createElement("div");
+      status.className = "cvs-reward-status";
+      status.textContent = !reward.isInStock ? "Out of stock" : "On cooldown";
+      info.appendChild(status);
+    }
+    item.appendChild(info);
+    rewardsPanel.appendChild(item);
+  }
 }
 
 // --- Scroll ---
@@ -1218,6 +1324,25 @@ function renderPredictionPanel(p) {
   const leftRatio = left.totalUsers > 0 ? (totalPoints / left.totalPoints).toFixed(2) : "\u2014";
   const rightRatio = right && right.totalUsers > 0 ? (totalPoints / right.totalPoints).toFixed(2) : "\u2014";
   const userBet = p.userPrediction;
+
+  // Timing row
+  const timing = document.createElement("div");
+  timing.className = "cvs-pred-timing";
+  const now = Date.now();
+  const created = new Date(p.createdAt).getTime();
+  const fmtAgo = (ms) => { const s = Math.floor(ms / 1000); if (s < 60) return s + "s ago"; const m = Math.floor(s / 60); if (m < 60) return m + "m ago"; const h = Math.floor(m / 60); return h + "h " + (m % 60) + "m ago"; };
+  if (p.status === "ACTIVE") {
+    const deadline = created + p.predictionWindowSeconds * 1000;
+    const remaining = Math.max(0, Math.ceil((deadline - now) / 1000));
+    timing.innerHTML = `<span>Created ${fmtAgo(now - created)}</span><span>Closes in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}</span>`;
+  } else if (p.status === "LOCKED") {
+    timing.innerHTML = `<span>Created ${fmtAgo(now - created)}</span><span>Locked ${p.lockedAt ? fmtAgo(now - new Date(p.lockedAt).getTime()) : ""}</span>`;
+  } else if (p.status === "RESOLVED") {
+    timing.innerHTML = `<span>Resolved ${p.endedAt ? fmtAgo(now - new Date(p.endedAt).getTime()) : ""}</span>`;
+  } else if (p.status === "CANCELED") {
+    timing.innerHTML = `<span>Canceled ${p.endedAt ? fmtAgo(now - new Date(p.endedAt).getTime()) : ""}</span>`;
+  }
+  predictionPanel.appendChild(timing);
 
   // Split bar
   const bar = document.createElement("div");
@@ -1856,10 +1981,11 @@ function updateAutocomplete() {
       if (login.toLowerCase().startsWith(query)) results.push({ login, displayName: messageBuffer[i].tags?.["display-name"] || login, color: userColors[login] || hashColor(login), badgeStr: messageBuffer[i].tags?.badges || "" });
     }
     renderAcItems(results);
-  } else if (token.startsWith(":") && token.length >= 2) {
+  } else if (token.length >= 2) {
     acMode = "emote";
     acTokenStart = start;
-    const query = token.slice(1).toLowerCase();
+    const query = (token.startsWith(":") ? token.slice(1) : token).toLowerCase();
+    if (!query) { closeAutocomplete(); return; }
     const results = [];
     for (const [name, emote] of Object.entries(thirdPartyEmotes)) {
       if (!isProviderEnabled(emote.provider)) continue;
@@ -2330,6 +2456,7 @@ function startVodPoll() {
       closeThread();
       clearPredictionState();
       clearPinnedState();
+      closeRewardsPanel();
       port.postMessage({ type: "vod-seek", videoId: vodId, offset });
     } else {
       port.postMessage({ type: "vod-time", videoId: vodId, offset });
@@ -2369,6 +2496,7 @@ function pollChannel() {
       closeThread();
       clearPredictionState();
       clearPinnedState();
+      closeRewardsPanel();
       updatePoints(null);
       updateInputPlaceholder();
       if (port) port.postMessage({ type: "vod-changed", videoId: vid });
@@ -2399,6 +2527,7 @@ function pollChannel() {
     closeThread();
     clearPredictionState();
     clearPinnedState();
+    closeRewardsPanel();
     updatePoints(null);
   }
 }
@@ -2480,6 +2609,41 @@ function init() {
       e.preventDefault(); e.stopPropagation(); toggleFullscreenChat();
     }
   }, true);
+
+  // Scroll-to-volume on player area
+  const nativeInputSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+  function setTwitchVolume(vol) {
+    const slider = document.querySelector('[data-a-target="player-volume-slider"]');
+    if (!slider) return;
+    nativeInputSet.call(slider, vol);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  // Force Twitch's native volume slider visible when hovering the player
+  const volVisStyle = document.createElement("style");
+  volVisStyle.textContent = `.volume-slider__slider-container { opacity: 1 !important; }`;
+  document.head.appendChild(volVisStyle);
+  document.addEventListener("wheel", (e) => {
+    if ((!currentChannel && !vodId) || !extensionEnabled) return;
+    if (e.target.closest("#cvs-chat") || e.target.closest(".cvs-resize-handle")) return;
+    if (!e.target.closest(".persistent-player") && !e.target.closest('[class*="video-player"]') && !e.target.closest('[data-a-target="player-overlay-click-handler"]')) return;
+    const v = document.querySelector("video");
+    const slider = document.querySelector('[data-a-target="player-volume-slider"]');
+    if (!v || !slider) return;
+    e.preventDefault();
+    const step = (settings.volumeStep ?? 5) / 100;
+    let vol = parseFloat(slider.value) || 0;
+    if (e.deltaY < 0) {
+      if (v.muted) {
+        const muteBtn = document.querySelector('[data-a-target="player-mute-unmute-button"]');
+        if (muteBtn) muteBtn.click();
+        vol = parseFloat(slider.value) || 0;
+      }
+      vol = Math.min(1, vol + step);
+    } else {
+      vol = Math.max(0, vol - step);
+    }
+    setTwitchVolume(vol);
+  }, { capture: true, passive: false });
 
   // Also poll periodically as a fallback for SPA navigations
   setInterval(pollChannel, 1500);

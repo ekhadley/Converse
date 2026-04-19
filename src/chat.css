@@ -900,9 +900,10 @@
 .cvs-pred-panel.cvs-hidden { display: none; }
 .cvs-pred-banner:has(+ .cvs-pred-panel:not(.cvs-hidden)) { border-radius: 8px 8px 0 0; margin-bottom: 0; }
 
-.cvs-pred-split-bar { display: flex; height: 24px; border-radius: 4px; overflow: hidden; margin-bottom: 8px; font-size: 12px; font-weight: 700; }
-.cvs-pred-split-left { background: #388BFF; display: flex; align-items: center; justify-content: center; color: #fff; transition: width 0.3s; min-width: 28px; }
-.cvs-pred-split-right { background: #F50097; display: flex; align-items: center; justify-content: center; color: #fff; transition: width 0.3s; min-width: 28px; }
+.cvs-pred-timing { display: flex; justify-content: space-between; font-size: 11px; color: #adadb8; margin-bottom: 5px; padding: 0 2px; }
+.cvs-pred-split-bar { display: flex; align-items: stretch; height: 17px; border-radius: 4px; overflow: hidden; margin-bottom: 8px; font-size: 11px; font-weight: 700; }
+.cvs-pred-split-left { background: #388BFF; height: 100%; display: flex; align-items: center; justify-content: center; color: #fff; transition: width 0.3s; min-width: 28px; }
+.cvs-pred-split-right { background: #F50097; height: 100%; display: flex; align-items: center; justify-content: center; color: #fff; transition: width 0.3s; min-width: 28px; }
 .cvs-pred-cols { display: flex; gap: 10px; padding: 0 4px; }
 .cvs-pred-side { flex: 1; min-width: 0; }
 .cvs-pred-side-left { text-align: left; }
@@ -934,3 +935,21 @@
 .cvs-pin-panel.cvs-hidden { display: none; }
 .cvs-pin-banner:has(+ .cvs-pin-panel:not(.cvs-hidden)) { border-radius: 8px 8px 0 0; margin-bottom: 0; }
 .cvs-pin-body { font-size: 13px; color: #dedee3; white-space: pre-wrap; word-break: break-word; }
+
+/* --- Rewards menu --- */
+
+.cvs-points { cursor: pointer; }
+.cvs-rewards-panel { position: absolute; bottom: 100%; right: 40px; width: 220px; max-height: calc(100vh - 150px); overflow-y: auto; background: rgba(15, 15, 20, 0.95); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 6px 0; z-index: 6; scrollbar-width: none; margin-bottom: 4px; }
+.cvs-rewards-panel::-webkit-scrollbar { display: none; }
+.cvs-rewards-panel.cvs-hidden { display: none; }
+.cvs-rewards-header { font-size: 11px; font-weight: 600; color: #bf94ff; padding: 4px 10px 6px; }
+.cvs-rewards-empty { padding: 12px; color: #898395; font-size: 12px; text-align: center; }
+.cvs-reward-item { display: flex; align-items: center; gap: 8px; padding: 5px 10px; }
+.cvs-reward-item:not(.cvs-reward-unavailable):hover { background: rgba(255, 255, 255, 0.06); }
+.cvs-reward-unavailable { opacity: 0.4; }
+.cvs-reward-img { width: 28px; height: 28px; border-radius: 4px; flex-shrink: 0; overflow: hidden; }
+.cvs-reward-img img { width: 100%; height: 100%; object-fit: cover; }
+.cvs-reward-info { flex: 1; min-width: 0; }
+.cvs-reward-title { font-size: 12px; color: #efeff1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cvs-reward-cost { font-size: 11px; color: #bf94ff; display: flex; align-items: center; gap: 3px; }
+.cvs-reward-status { font-size: 10px; color: #898395; font-style: italic; }

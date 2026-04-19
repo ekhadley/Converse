@@ -306,6 +306,15 @@
     </div>
 
     <div class="setting">
+      <label>Volume step %</label>
+      <div class="spinner">
+        <button class="spinner-btn" id="volumeStepDec">&minus;</button>
+        <input type="number" id="volumeStep" min="1" max="25" value="5" />
+        <button class="spinner-btn" id="volumeStepInc">+</button>
+      </div>
+    </div>
+
+    <div class="setting">
       <label>Timestamps</label>
       <label class="toggle">
         <input type="checkbox" id="showTimestamps" checked />

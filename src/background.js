@@ -170,12 +170,16 @@ async function fetchChannelRewards(channelLogin) {
       extensions: { persistedQuery: { version: 1, sha256Hash: GQL_REWARDS_HASH } },
     });
     const rewards = data?.data?.community?.channel?.communityPointsSettings?.customRewards || [];
-    const map = {};
-    for (const r of rewards) map[r.id] = r.title;
-    return map;
+    return rewards.map(r => ({
+      id: r.id, title: r.title, cost: r.cost,
+      image: r.image?.url || r.defaultImage?.url || null,
+      backgroundColor: r.backgroundColor || "#9147ff",
+      isEnabled: r.isEnabled !== false, isPaused: !!r.isPaused,
+      isInStock: r.isInStock !== false, cooldownExpiresAt: r.cooldownExpiresAt || null,
+    }));
   } catch (e) {
     console.error("Failed to fetch channel rewards:", e);
-    return {};
+    return [];
   }
 }
 
@@ -228,13 +232,23 @@ function normalizePrediction(event) {
   return prediction;
 }
 
+async function fetchStreamStartedAt(channelLogin) {
+  try {
+    const data = await helixFetch(`streams?user_login=${channelLogin}`);
+    return data.data?.[0]?.started_at || null;
+  } catch {
+    return null;
+  }
+}
+
 function startPredictionPoll(channel) {
   if (predictionPolls[channel]) return;
-  const poll = { timer: null, lastPrediction: null, lastJSON: null };
+  const poll = { timer: null, lastPrediction: null, lastJSON: null, streamStartedAt: undefined };
   predictionPolls[channel] = poll;
   async function tick() {
     if (!predictionPolls[channel]) return;
-    const prediction = await fetchPrediction(channel);
+    if (poll.streamStartedAt === undefined) poll.streamStartedAt = await fetchStreamStartedAt(channel);
+    let prediction = await fetchPrediction(channel);
     // GQL activePredictionEvent returns null for locked predictions — preserve non-terminal state
     if (!prediction && poll.lastPrediction && (poll.lastPrediction.status === "ACTIVE" || poll.lastPrediction.status === "LOCKED")) return;
     // Restore persisted user bet if GQL didn't return one
@@ -245,6 +259,10 @@ function startPredictionPoll(channel) {
     // Clean up persisted bet on terminal states
     if (prediction && (prediction.status === "RESOLVED" || prediction.status === "CANCELED")) {
       chrome.storage.local.remove(`predBet:${prediction.id}`);
+    }
+    // Skip resolved/canceled predictions from before the current stream
+    if (prediction && poll.streamStartedAt && (prediction.status === "RESOLVED" || prediction.status === "CANCELED") && prediction.createdAt && new Date(prediction.createdAt) < new Date(poll.streamStartedAt)) {
+      prediction = null;
     }
     const json = JSON.stringify(prediction);
     if (json === poll.lastJSON) return;
@@ -579,6 +597,14 @@ chrome.runtime.onConnect.addListener((port) => {
       } catch (e) {
         console.error("Failed to fetch channel data:", e);
       }
+    }
+
+    if (msg.type === "refresh-rewards") {
+      const channel = port._channel;
+      if (!channel) return;
+      fetchChannelRewards(channel).then(rewards => {
+        port.postMessage({ type: "rewards-updated", rewards });
+      });
     }
 
     if (msg.type === "refresh-emotes") {

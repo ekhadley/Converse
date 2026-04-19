@@ -66,6 +66,9 @@ const fontSizeInc = document.getElementById("fontSizeInc");
 const msgSpacingEl = document.getElementById("messageSpacing");
 const msgSpacingDec = document.getElementById("messageSpacingDec");
 const msgSpacingInc = document.getElementById("messageSpacingInc");
+const volumeStepEl = document.getElementById("volumeStep");
+const volumeStepDec = document.getElementById("volumeStepDec");
+const volumeStepInc = document.getElementById("volumeStepInc");
 const showTimestampsEl = document.getElementById("showTimestamps");
 const showBadgesEl = document.getElementById("showBadges");
 const showPredictionsEl = document.getElementById("showPredictions");
@@ -86,6 +89,7 @@ async function loadSettings() {
   useNativeChatEl.checked = !!s.useNativeChat;
   fontSizeEl.value = s.fontSize;
   msgSpacingEl.value = s.messageSpacing;
+  volumeStepEl.value = s.volumeStep;
   showTimestampsEl.checked = s.showTimestamps;
   showBadgesEl.checked = s.showBadges;
   showPredictionsEl.checked = s.showPredictions;
@@ -106,6 +110,7 @@ function readSettings() {
     useNativeChat: useNativeChatEl.checked,
     fontSize: parseInt(fontSizeEl.value),
     messageSpacing: parseInt(msgSpacingEl.value),
+    volumeStep: parseInt(volumeStepEl.value),
     showTimestamps: showTimestampsEl.checked,
     showBadges: showBadgesEl.checked,
     showPredictions: showPredictionsEl.checked,
@@ -152,6 +157,18 @@ msgSpacingInc.addEventListener("click", () => {
   saveSettings();
 });
 msgSpacingEl.addEventListener("change", saveSettings);
+function clampVolumeStep(v) {
+  return Math.min(25, Math.max(1, v));
+}
+volumeStepDec.addEventListener("click", () => {
+  volumeStepEl.value = clampVolumeStep(parseInt(volumeStepEl.value) - 1);
+  saveSettings();
+});
+volumeStepInc.addEventListener("click", () => {
+  volumeStepEl.value = clampVolumeStep(parseInt(volumeStepEl.value) + 1);
+  saveSettings();
+});
+volumeStepEl.addEventListener("change", saveSettings);
 showTimestampsEl.addEventListener("change", saveSettings);
 showBadgesEl.addEventListener("change", saveSettings);
 showPredictionsEl.addEventListener("change", saveSettings);
