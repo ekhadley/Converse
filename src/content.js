@@ -93,6 +93,9 @@ function getChannel() {
     "videos",
   ];
   if (exclude.includes(name)) return null;
+  // Skip offline channel pages — Twitch shows the channel home (about/schedule/videos)
+  // and our resize CSS breaks that layout. The chat-shell may still exist for replays.
+  if (document.querySelector(".channel-status-info--offline")) return null;
   return name;
 }
 
@@ -202,7 +205,8 @@ function applyChatVisibility() {
   const shell = document.querySelector(".chat-shell, [class*='chat-shell']");
   extensionEnabled = !settings.useNativeChat;
   chatCollapsed = !!settings.hideChat;
-  if (!extensionEnabled) {
+  const hasContext = !!(currentChannel || vodId);
+  if (!extensionEnabled || !hasContext) {
     if (shell) shell.classList.remove("cvs-active");
     if (cvsStyleEl) cvsStyleEl.textContent = "";
   } else {
@@ -2512,9 +2516,13 @@ function pollChannel() {
     if (ch && port) {
       port.postMessage({ type: "channel-changed", channel: ch });
     }
-    // Navigated away from a channel — clear resize overrides so Twitch
-    // can manage the player (mini-player, PiP, etc.)
-    if (!ch && cvsStyleEl) cvsStyleEl.textContent = "";
+    // Navigated away from a channel (or to an offline channel) — clear resize
+    // overrides and deactivate the chat shell so Twitch's offline page renders.
+    if (!ch) {
+      if (cvsStyleEl) cvsStyleEl.textContent = "";
+      const shell = document.querySelector(".chat-shell, [class*='chat-shell']");
+      if (shell) shell.classList.remove("cvs-active");
+    }
     // Clear messages on channel switch
     pendingLines = [];
     if (messageList) messageList.innerHTML = "";
