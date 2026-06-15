@@ -84,9 +84,10 @@ A single `div.cvs-autocomplete` dropdown positioned above the input, shared by e
 Sent messages are pushed to an in-memory `inputHistory` array (capped at 50). Up arrow cycles backwards through history, Down arrow cycles forwards. Current input is saved/restored when entering/exiting history. Any typing resets the history index.
 
 ### Message Moderation
-- `CLEARCHAT` with trailing: marks all messages from that user as deleted (`cvs-line-deleted` class — reduced opacity + label showing "Banned" or "Timed out (duration)"). Without trailing: clears entire chat.
-- `CLEARMSG`: marks single message as deleted by `target-msg-id` tag ("Deleted by a mod" label).
-- `markDeleted(el, label)` prepends a `.cvs-meta-bar` label and adds `.cvs-line-deleted` (idempotent). Messages stay in the DOM rather than being removed.
+- `CLEARCHAT` with trailing: marks all of that user's messages as deleted (greyed via `cvs-line-deleted`) and prepends a per-line `.cvs-meta-bar` label ("Banned" or "Timed out (duration)").
+- `CLEARCHAT` without trailing: marks every message in the chat as deleted (DOM is kept, not wiped) and appends one `.cvs-line-mod-notice` row "Chat cleared by a mod".
+- `CLEARMSG`: marks single message as deleted by `target-msg-id` tag with a "Deleted by a mod" `.cvs-meta-bar` label.
+- `markDeleted(el, label)` adds `.cvs-line-deleted` (idempotent) and prepends a `.cvs-meta-bar` label when one is provided; passing `null` skips the per-line label. `queueModNotice(text)` queues a system-style notice row.
 
 ### Alternating Row Colors
 Messages alternate odd/even backgrounds via `cvs-line-even` class, assigned once at insertion time in `flushMessages()` by chaining off the last child's actual class. The class is never re-indexed. Pruning is deferred while `autoScroll` is false (chat paused) to prevent DOM removals above the viewport from shifting scroll position; the backlog is pruned on `resumeScroll()`. Colors set via CSS custom properties `--cvs-bg-odd` / `--cvs-bg-even`, configurable in popup settings.
@@ -311,12 +312,12 @@ Native scrollbar is hidden (`scrollbar-width: none` + `::-webkit-scrollbar { dis
 ### Small Tweaks
 
 ### Features
-- [ ] First message highlights — visually highlight a user's first message in the channel
+- [x] First message highlights — visually highlight a user's first message in the channel
 - [x] Channel points counter — display current channel points balance
 - [x] Badge hovering — tooltip on badge hover showing badge title and 4x image preview
 - [x] Channel point redeems — redeem title shown via GQL `ChannelPointsContext` (reward id→title map fetched on channel join)
 - [x] Channel points counter — DOM scraping from Twitch's native community-points-summary element
-- [ ] Channel points menu — click points counter to open rewards menu for redeeming
+- [x] Channel points menu — click points counter to open rewards menu for redeeming
 - [x] Predictions — display and interact with channel predictions (GQL polling + MakePrediction mutation, collapsible banner + panel UI)
 - [ ] Polls — display and interact with channel polls
 - [x] Links in chat — render clickable hyperlinks in chat messages

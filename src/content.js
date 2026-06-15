@@ -72,6 +72,9 @@ let pinnedExpanded = false;
 let pinnedCountdown = null;
 let pinnedCountdownEl = null;
 let pinnedCountdownDeadline = 0;
+let bannerChipsRow = null;
+let predictionChip = null;
+let pinnedChip = null;
 let wasTheatreBeforeFs = false;
 
 // --- Channel detection ---
@@ -155,6 +158,7 @@ function connectPort() {
       fillUsercardProfile(msg.login, msg.profile);
     }
     if (msg.type === "prediction-update") {
+      if (currentPrediction?.id !== msg.prediction?.id) predictionDismissed = false;
       currentPrediction = msg.prediction;
       updatePredictionUI();
     }
@@ -424,6 +428,10 @@ function buildChatUI(shell) {
   inputEl.addEventListener("input", () => { historyIndex = -1; updateAutocomplete(); updateInputOverlay(); });
   inputEl.addEventListener("keyup", () => syncOverlayScroll());
   inputEl.addEventListener("click", () => syncOverlayScroll());
+  inputOverlay.addEventListener("click", (e) => {
+    const mention = e.target.closest(".cvs-input-mention");
+    if (mention) openUsercard(mention.dataset.user, e);
+  });
   inputEl.addEventListener("blur", () => { setTimeout(closeAutocomplete, 150); });
 
   // Resize handle
@@ -693,6 +701,23 @@ function buildChatUI(shell) {
   pinnedPanel.className = "cvs-pin-panel cvs-hidden";
   chatContainer.appendChild(pinnedBanner);
   chatContainer.appendChild(pinnedPanel);
+
+  // Minimized chip row (icon buttons shown when banners are dismissed)
+  bannerChipsRow = document.createElement("div");
+  bannerChipsRow.className = "cvs-banner-chips cvs-hidden";
+  predictionChip = document.createElement("button");
+  predictionChip.className = "cvs-banner-chip cvs-pred-chip cvs-hidden";
+  predictionChip.title = "Show prediction";
+  predictionChip.innerHTML = '<svg width="14" height="14" viewBox="0 0 640 512" fill="currentColor"><path d="M384 32H512c17.7 0 32 14.3 32 32s-14.3 32-32 32H398.4c-5.2 25.8-22.9 47.1-46.4 57.3V448H512c17.7 0 32 14.3 32 32s-14.3 32-32 32H128c-17.7 0-32-14.3-32-32s14.3-32 32-32H288V153.3c-23.5-10.3-41.2-31.6-46.4-57.3H128c-17.7 0-32-14.3-32-32s14.3-32 32-32H256c14.6-19.4 37.8-32 64-32s49.4 12.6 64 32zM125.8 177.3L51.1 320H200.5L125.8 177.3zM4.2 336.1L100 157c6.1-11.5 20.6-15.7 32-10.1 8 3.9 13.3 11.4 15 19.6l95.8 179.1c14.6 27.4 1.4 60.7-29.6 71.4C205 420.3 196.4 422 187.8 422c0 0 0 0-.1 0H63.9c0 0 0 0-.1 0c-8.6 0-17.2-1.7-25.2-5.1C7.5 407.4-5.1 378.3 4.2 336.1zM514.2 177.3L439.5 320H588.9L514.2 177.3zM392.4 336.1L488.2 157c6.1-11.5 20.6-15.7 32-10.1 8 3.9 13.3 11.4 15 19.6l95.8 179.1c14.6 27.4 1.4 60.7-29.6 71.4-8 3.4-16.6 5.1-25.2 5.1c0 0 0 0-.1 0H452.1c0 0 0 0-.1 0c-8.6 0-17.2-1.7-25.2-5.1C395.9 407.4 383.3 378.3 392.4 336.1z"/></svg>';
+  predictionChip.addEventListener("click", () => { predictionDismissed = false; updatePredictionUI(); });
+  pinnedChip = document.createElement("button");
+  pinnedChip.className = "cvs-banner-chip cvs-pin-chip cvs-hidden";
+  pinnedChip.title = "Show pinned message";
+  pinnedChip.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14"><path fill="currentColor" d="M12 1.5a.5.5 0 0 0-.854-.354L8.354 3.854a.5.5 0 0 1-.708 0L6.354 2.561A.5.5 0 0 0 5.5 2.915V7.5a.5.5 0 0 1-.146.354l-3 3A.5.5 0 0 0 2.707 12H7v6.5a.5.5 0 0 0 1 0V12h4.293a.5.5 0 0 0 .353-.854l-3-3A.5.5 0 0 1 9.5 7.5V3.915a.5.5 0 0 0-.146-.354"/></svg>';
+  pinnedChip.addEventListener("click", () => { pinnedDismissed = false; updatePinnedUI(); });
+  bannerChipsRow.appendChild(predictionChip);
+  bannerChipsRow.appendChild(pinnedChip);
+  chatContainer.appendChild(bannerChipsRow);
 
   chatContainer.appendChild(messageList);
   chatContainer.appendChild(threadPanel);
@@ -1262,14 +1287,25 @@ function startPredictionCountdown(el, prediction) {
   predictionCountdown = setInterval(update, 1000);
 }
 
+function updateBannerChips() {
+  if (!bannerChipsRow) return;
+  const showPred = settings.showPredictions && !!currentPrediction && predictionDismissed;
+  const showPin = !!pinnedMessage && pinnedDismissed;
+  predictionChip.classList.toggle("cvs-hidden", !showPred);
+  pinnedChip.classList.toggle("cvs-hidden", !showPin);
+  bannerChipsRow.classList.toggle("cvs-hidden", !showPred && !showPin);
+}
+
 function updatePredictionUI() {
   if (!predictionBanner || !predictionPanel) return;
   if (!settings.showPredictions || !currentPrediction || predictionDismissed) {
     predictionBanner.classList.add("cvs-hidden");
     predictionPanel.classList.add("cvs-hidden");
     clearPredictionCountdown();
+    updateBannerChips();
     return;
   }
+  updateBannerChips();
   const p = currentPrediction;
 
   // --- Banner ---
@@ -1431,8 +1467,10 @@ function renderPredictionSystemMessage(event, prediction) {
   if (!settings.showPredictions) return;
   const line = document.createElement("div");
   line.className = "cvs-line cvs-line-prediction";
-  const bar = document.createElement("div");
-  bar.className = "cvs-meta-bar";
+  const ts = makeSystemTimestamp({ tags: {} });
+  if (ts) line.appendChild(ts);
+  const bar = document.createElement("span");
+  bar.className = "cvs-pred-text";
   if (event === "started") bar.textContent = `Prediction: ${prediction.title}`;
   else if (event === "locked") bar.textContent = "Prediction locked";
   else if (event === "resolved") {
@@ -1487,8 +1525,10 @@ function updatePinnedUI() {
     pinnedBanner.classList.add("cvs-hidden");
     if (pinnedPanel) pinnedPanel.classList.add("cvs-hidden");
     clearPinnedCountdown();
+    updateBannerChips();
     return;
   }
+  updateBannerChips();
   pinnedBanner.classList.remove("cvs-hidden");
   pinnedBanner.innerHTML = "";
 
@@ -1698,10 +1738,22 @@ function makeSystemTimestamp(msg) {
 function markDeleted(el, label = "Deleted by a mod") {
   if (el.classList.contains("cvs-line-deleted")) return;
   el.classList.add("cvs-line-deleted");
+  if (!label) return;
   const bar = document.createElement("div");
   bar.className = "cvs-meta-bar";
   bar.textContent = label;
   el.prepend(bar);
+}
+
+function queueModNotice(text) {
+  const line = document.createElement("div");
+  line.className = "cvs-line cvs-line-system cvs-line-mod-notice";
+  const ts = makeSystemTimestamp({ tags: {} });
+  if (ts) line.appendChild(ts);
+  const span = document.createElement("span");
+  span.textContent = text;
+  line.appendChild(span);
+  queueLine(line);
 }
 
 function formatBanDuration(s) {
@@ -1723,8 +1775,10 @@ function handleIRCMessage(msg) {
       const els = chatContainer.querySelectorAll(`.cvs-line[data-user="${msg.trailing}"]`);
       for (const el of els) markDeleted(el, label);
     } else {
-      pendingLines = [];
-      messageList.innerHTML = "";
+      for (const l of pendingLines) markDeleted(l, null);
+      const els = chatContainer.querySelectorAll(".cvs-line");
+      for (const el of els) markDeleted(el, null);
+      queueModNotice("Chat cleared by a mod");
     }
     updateScrollbar();
     return;
@@ -1908,14 +1962,16 @@ function renderMessageBody(container, text, emotesTag) {
           img.dataset.scope = emote.scope || "global";
           container.appendChild(img);
         } else if (/^@[a-zA-Z0-9_]+/.test(word)) {
+          const m = word.match(/^@[a-zA-Z0-9_]+/);
           const mention = document.createElement("span");
           mention.className = "cvs-mention";
-          const login = word.slice(1).toLowerCase();
+          const login = m[0].slice(1).toLowerCase();
           const mentionColor = userColors[login] || hashColor(login);
           mention.style.color = mentionColor;
-          mention.textContent = word;
+          mention.textContent = m[0];
           mention.dataset.user = login;
           container.appendChild(mention);
+          if (word.length > m[0].length) container.appendChild(document.createTextNode(word.slice(m[0].length)));
         } else if (/^https?:\/\/\S+$/i.test(word) || /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}(?:[\/\?#]\S*)?$/i.test(word)) {
           const a = document.createElement("a");
           a.href = /^https?:\/\//i.test(word) ? word : "https://" + word;
@@ -1995,7 +2051,11 @@ function updateAutocomplete() {
       if (!isProviderEnabled(emote.provider)) continue;
       if (name.toLowerCase().includes(query)) results.push({ name, emote, isPrefix: name.toLowerCase().startsWith(query) });
     }
-    results.sort((a, b) => { if (a.isPrefix !== b.isPrefix) return a.isPrefix ? -1 : 1; return a.name.length - b.name.length; });
+    for (const [name, char] of Object.entries(EMOJIS)) {
+      if (name.includes(query)) results.push({ name, char, isEmoji: true, isPrefix: name.startsWith(query) });
+    }
+    // Emojis sort below emotes (lower priority); within each group: prefix matches first, then shorter names.
+    results.sort((a, b) => { if (!a.isEmoji !== !b.isEmoji) return a.isEmoji ? 1 : -1; if (a.isPrefix !== b.isPrefix) return a.isPrefix ? -1 : 1; return a.name.length - b.name.length; });
     renderAcItems(results.slice(0, 15));
   } else {
     closeAutocomplete();
@@ -2012,20 +2072,27 @@ function renderAcItems(results) {
     item.className = "cvs-ac-item";
     if (acMode === "emote") {
       const r = results[i];
-      const img = document.createElement("img");
-      img.className = "cvs-ac-emote-img";
-      img.src = r.emote.url;
-      img.alt = r.name;
-      item.appendChild(img);
+      if (r.isEmoji) {
+        const charSpan = document.createElement("span");
+        charSpan.className = "cvs-ac-emoji";
+        charSpan.textContent = r.char;
+        item.appendChild(charSpan);
+      } else {
+        const img = document.createElement("img");
+        img.className = "cvs-ac-emote-img";
+        img.src = r.emote.url;
+        img.alt = r.name;
+        item.appendChild(img);
+      }
       const nameSpan = document.createElement("span");
       nameSpan.className = "cvs-ac-name";
       nameSpan.textContent = r.name;
       item.appendChild(nameSpan);
       const labelSpan = document.createElement("span");
       labelSpan.className = "cvs-ac-label";
-      labelSpan.textContent = PROVIDER_LABELS[r.emote.provider] || r.emote.provider;
+      labelSpan.textContent = r.isEmoji ? "Emoji" : (PROVIDER_LABELS[r.emote.provider] || r.emote.provider);
       item.appendChild(labelSpan);
-      item.dataset.value = r.name;
+      item.dataset.value = r.isEmoji ? r.char : r.name;
     } else {
       const r = results[i];
       if (r.badgeStr) {
@@ -2086,6 +2153,8 @@ function updateInputOverlay() {
       const login = part.slice(1).toLowerCase();
       if (userColors[login] || login === currentChannel) {
         const span = document.createElement("span");
+        span.className = "cvs-input-mention";
+        span.dataset.user = login;
         span.style.color = userColors[login] || hashColor(login);
         span.style.fontWeight = "600";
         span.textContent = part;

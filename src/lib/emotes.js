@@ -15,6 +15,23 @@ async function setCache(key, data, ttl) {
   await chrome.storage.local.set({ [key]: { data, ts: Date.now(), ttl, v: CACHE_VERSION } });
 }
 
+// --- Twitch globals (requires Helix auth) ---
+export async function fetchTwitchGlobals(helixFetch) {
+  const cached = await getCached("emotes_twitch_global");
+  if (cached) return cached;
+  const data = await helixFetch("chat/emotes/global");
+  const map = {};
+  for (const e of data.data || []) {
+    map[e.name] = {
+      url: e.images?.url_1x,
+      provider: "twitch",
+      scope: "global",
+    };
+  }
+  await setCache("emotes_twitch_global", map, CACHE_TTL_GLOBAL);
+  return map;
+}
+
 // --- 7TV ---
 async function fetch7TVGlobal() {
   const cached = await getCached("emotes_7tv_global");
@@ -148,15 +165,16 @@ async function fetchFFZChannel(userId) {
 }
 
 export async function clearEmoteCache(userId) {
-  const keys = ["emotes_7tv_global", "emotes_bttv_global", "emotes_ffz_global", `emotes_7tv_${userId}`, `emotes_bttv_${userId}`, `emotes_ffz_${userId}`];
+  const keys = ["emotes_twitch_global", "emotes_7tv_global", "emotes_bttv_global", "emotes_ffz_global", `emotes_7tv_${userId}`, `emotes_bttv_${userId}`, `emotes_ffz_${userId}`];
   await chrome.storage.local.remove(keys);
 }
 
 // --- Unified fetch ---
-// Priority: 7TV > BTTV > FFZ (later spreads win on collision)
-export async function fetchAllEmotes(userId) {
+// Priority: Twitch < FFZ < BTTV < 7TV (later spreads win on collision)
+export async function fetchAllEmotes(userId, helixFetch) {
   const safe = (p) => p.catch(() => ({}));
-  const [s7g, s7c, btg, btc, fzg, fzc] = await Promise.all([
+  const [tw, s7g, s7c, btg, btc, fzg, fzc] = await Promise.all([
+    helixFetch ? safe(fetchTwitchGlobals(helixFetch)) : Promise.resolve({}),
     safe(fetch7TVGlobal()),
     safe(fetch7TVChannel(userId)),
     safe(fetchBTTVGlobal()),
@@ -164,6 +182,5 @@ export async function fetchAllEmotes(userId) {
     safe(fetchFFZGlobal()),
     safe(fetchFFZChannel(userId)),
   ]);
-  // FFZ < BTTV < 7TV — last spread wins, so 7TV goes last
-  return { ...fzg, ...fzc, ...btg, ...btc, ...s7g, ...s7c };
+  return { ...tw, ...fzg, ...fzc, ...btg, ...btc, ...s7g, ...s7c };
 }

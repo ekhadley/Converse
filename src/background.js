@@ -582,7 +582,7 @@ chrome.runtime.onConnect.addListener((port) => {
           startPinnedPoll(channel);
           const [badges, emotes, recentMessages, rewards] = await Promise.all([
             fetchBadges(helixFetch, userId),
-            fetchAllEmotes(userId),
+            fetchAllEmotes(userId, helixFetch),
             fetchRecentMessages(channel).catch((e) => {
               console.error("Failed to fetch recent messages:", e);
               return [];
@@ -614,7 +614,7 @@ chrome.runtime.onConnect.addListener((port) => {
         const userId = channelUserIds[channel] || await getUserId(channel);
         if (userId) {
           await clearEmoteCache(userId);
-          const emotes = await fetchAllEmotes(userId);
+          const emotes = await fetchAllEmotes(userId, helixFetch);
           port.postMessage({ type: "emotes-refreshed", emotes });
         }
       } catch (e) {
@@ -634,7 +634,7 @@ chrome.runtime.onConnect.addListener((port) => {
         port._vod.userId = info.userId;
         const [vodBadges, vodEmotes] = await Promise.all([
           currentAccount ? fetchBadges(helixFetch, info.userId).catch(() => ({})) : {},
-          fetchAllEmotes(info.userId).catch(() => ({})),
+          fetchAllEmotes(info.userId, currentAccount ? helixFetch : null).catch(() => ({})),
         ]);
         port.postMessage({
           type: "vod-channel-data",
